@@ -1,0 +1,35 @@
+# Elixir dependencies
+/deps/
+
+# Build artifacts
+/_build/
+
+# Language Server artifacts
+/.elixir_ls/
+
+# Mix lock file (comment out if you want to commit it)
+mix.lock
+
+# Compiled beam files
+*.beam
+
+# Coverage reports
+/cover/
+
+# Log files
+*.log
+
+# Runtime files
+erl_crash.dump
+
+# Environment variables
+.env
+.env.local
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
