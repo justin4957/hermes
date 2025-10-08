@@ -1,0 +1,228 @@
+openapi: 3.0.3
+info:
+  title: Hermes LLM Sidecar API
+  description: |
+    A minimal, efficient Elixir-based sidecar service that interfaces with Ollama
+    to serve and scale local LLM requests.
+
+    ## Features
+
+    - Concurrent processing of multiple LLM requests
+    - Support for multiple Ollama models
+    - Built-in timeout and resource management
+    - RESTful HTTP API
+    - Health monitoring and status endpoints
+
+  version: 0.1.0
+  contact:
+    name: ThoughtMode Works
+    url: https://github.com/Thought-Mode-Works/hermes
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:4020
+    description: Local development server
+  - url: http://localhost:4020/v1
+    description: API v1 endpoints
+
+tags:
+  - name: LLM
+    description: Language model generation endpoints
+  - name: System
+    description: System health and monitoring endpoints
+
+paths:
+  /v1/llm/{model}:
+    post:
+      tags:
+        - LLM
+      summary: Generate text from LLM model
+      description: |
+        Submit a text prompt to the specified Ollama model and receive a generated
+        completion. The request is processed asynchronously with timeout protection.
+
+        ## Supported Models
+
+        Common Ollama models include:
+        - `gemma` - Google's Gemma model
+        - `llama3` - Meta's Llama 3 model
+        - `mistral` - Mistral AI model
+
+        The actual available models depend on what is installed in your Ollama instance.
+
+      operationId: generateText
+      parameters:
+        - name: model
+          in: path
+          required: true
+          description: Name of the Ollama model to use for generation
+          schema:
+            type: string
+            example: gemma
+          examples:
+            gemma:
+              value: gemma
+              summary: Use Gemma model
+            llama3:
+              value: llama3
+              summary: Use Llama 3 model
+            mistral:
+              value: mistral
+              summary: Use Mistral model
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateRequest'
+            examples:
+              simple:
+                summary: Simple question
+                value:
+                  prompt: "What is Elixir?"
+              complex:
+                summary: Complex prompt
+                value:
+                  prompt: "Explain the benefits of functional programming in detail"
+
+      responses:
+        '200':
+          description: Successfully generated response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateResponse'
+              examples:
+                success:
+                  summary: Successful generation
+                  value:
+                    result: "Elixir is a dynamic, functional programming language designed for building maintainable and scalable applications..."
+
+        '400':
+          description: Bad request - missing or invalid prompt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missingPrompt:
+                  summary: Missing prompt field
+                  value:
+                    error: "Missing 'prompt' field or invalid JSON"
+
+        '500':
+          description: Internal server error - generation failed or timeout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                timeout:
+                  summary: Request timeout
+                  value:
+                    error: "Request timeout after 30000ms"
+                ollamaError:
+                  summary: Ollama API error
+                  value:
+                    error: "Request failed: connection refused"
+
+  /v1/status:
+    get:
+      tags:
+        - System
+      summary: Get system health status
+      description: |
+        Returns current system health metrics including memory usage and scheduler
+        information. Useful for monitoring, health checks, and container orchestration.
+
+      operationId: getStatus
+      responses:
+        '200':
+          description: System status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+              examples:
+                healthy:
+                  summary: Healthy system
+                  value:
+                    status: "ok"
+                    memory:
+                      total: 45678912
+                      processes: 12345678
+                      system: 23456789
+                    schedulers: 8
+
+components:
+  schemas:
+    GenerateRequest:
+      type: object
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          description: Text prompt to send to the LLM model
+          minLength: 1
+          maxLength: 100000
+          example: "What is the capital of France?"
+
+    GenerateResponse:
+      type: object
+      required:
+        - result
+      properties:
+        result:
+          type: string
+          description: Generated text response from the model
+          example: "The capital of France is Paris."
+
+    StatusResponse:
+      type: object
+      required:
+        - status
+        - memory
+        - schedulers
+      properties:
+        status:
+          type: string
+          description: Overall system status
+          enum: [ok]
+          example: "ok"
+        memory:
+          type: object
+          description: BEAM VM memory statistics in bytes
+          required:
+            - total
+            - processes
+            - system
+          properties:
+            total:
+              type: integer
+              description: Total memory allocated by the VM
+              example: 45678912
+            processes:
+              type: integer
+              description: Memory used by Erlang processes
+              example: 12345678
+            system:
+              type: integer
+              description: Memory used by the VM system
+              example: 23456789
+        schedulers:
+          type: integer
+          description: Number of online schedulers
+          example: 8
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Human-readable error message describing what went wrong
+          example: "Missing 'prompt' field or invalid JSON"

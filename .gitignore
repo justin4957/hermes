@@ -16,6 +16,9 @@ mix.lock
 # Coverage reports
 /cover/
 
+# Generated documentation
+/doc/
+
 # Log files
 *.log
 

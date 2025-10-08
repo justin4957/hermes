@@ -1,8 +1,67 @@
 defmodule Hermes.Ollama do
-  @moduledoc "Client for Ollama REST API"
-  
+  @moduledoc """
+  HTTP client for interacting with the Ollama REST API.
+
+  This module provides functions for sending generation requests to a locally
+  running Ollama instance. It handles request formatting, response parsing,
+  and error cases.
+
+  ## Configuration
+
+  The Ollama base URL and timeout can be configured in `config/config.exs`:
+
+      config :hermes, :ollama,
+        base_url: "http://localhost:11434",
+        timeout: 30_000
+
+  ## Examples
+
+      # Generate text with default timeout
+      {:ok, response} = Hermes.Ollama.generate("gemma", "What is Elixir?")
+
+      # Generate with custom timeout
+      {:ok, response} = Hermes.Ollama.generate("llama3", "Explain AI", timeout: 60_000)
+
+      # Handle errors
+      case Hermes.Ollama.generate("invalid-model", "test") do
+        {:ok, response} -> IO.puts(response)
+        {:error, reason} -> IO.puts("Error: \#{reason}")
+      end
+  """
+
   @url "http://localhost:11434/api/generate"
 
+  @doc """
+  Generates text completion from an Ollama model.
+
+  Sends a prompt to the specified Ollama model and returns the generated response.
+  The request is made in non-streaming mode, returning the complete response once
+  generation is finished.
+
+  ## Parameters
+
+    * `model` - String name of the Ollama model to use (e.g., "gemma", "llama3")
+    * `prompt` - String containing the text prompt to send to the model
+    * `opts` - Keyword list of options:
+      * `:timeout` - Request timeout in milliseconds (default: 30,000)
+
+  ## Returns
+
+    * `{:ok, response}` - On success, returns the generated text response
+    * `{:error, reason}` - On failure, returns error description
+
+  ## Examples
+
+      iex> Hermes.Ollama.generate("gemma", "Hello")
+      {:ok, "Hello! How can I assist you today?"}
+
+      iex> Hermes.Ollama.generate("llama3", "2+2=?", timeout: 10_000)
+      {:ok, "2 + 2 = 4"}
+
+      iex> Hermes.Ollama.generate("nonexistent", "test")
+      {:error, "HTTP 404: model not found"}
+  """
+  @spec generate(String.t(), String.t(), keyword()) :: {:ok, String.t()} | {:error, String.t()}
   def generate(model, prompt, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     
