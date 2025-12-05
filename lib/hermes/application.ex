@@ -17,19 +17,31 @@ defmodule Hermes.Application do
 
   ## Configuration
 
-  The HTTP server port can be configured in `config/config.exs`:
+  The HTTP server port can be configured via:
+
+  1. Environment variable: `PORT=4020`
+  2. Application config in `config/config.exs`:
 
       config :hermes, :http,
         port: 4020
+
+  Environment variables take precedence over config file settings.
   """
 
   use Application
+
+  alias Hermes.Config
 
   @doc """
   Starts the Hermes application and its supervision tree.
 
   Called automatically by the OTP framework when the application starts.
-  Initializes the HTTP server on port 4020 and sets up supervised processes.
+  Initializes the HTTP server on the configured port and sets up supervised processes.
+
+  The port is determined by `Hermes.Config.http_port/0`, which checks:
+  1. `PORT` environment variable
+  2. Application config (`:hermes, :http, :port`)
+  3. Default value of 4020
 
   ## Parameters
 
@@ -43,10 +55,12 @@ defmodule Hermes.Application do
   """
   @spec start(any(), any()) :: {:ok, pid()} | {:error, any()}
   def start(_type, _args) do
+    port = Config.http_port()
+
     children = [
       {Finch, name: Hermes.Finch},
       Hermes.Supervisor,
-      {Plug.Cowboy, scheme: :http, plug: Hermes.Router, options: [port: 4020]}
+      {Plug.Cowboy, scheme: :http, plug: Hermes.Router, options: [port: port]}
     ]
 
     opts = [strategy: :one_for_one, name: Hermes.AppSupervisor]

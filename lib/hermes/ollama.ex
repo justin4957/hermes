@@ -31,7 +31,7 @@ defmodule Hermes.Ollama do
 
   @behaviour Hermes.OllamaBehaviour
 
-  @default_base_url "http://localhost:11434"
+  alias Hermes.Config
 
   @doc """
   Generates text completion from an Ollama model.
@@ -65,7 +65,7 @@ defmodule Hermes.Ollama do
   """
   @spec generate(String.t(), String.t(), keyword()) :: {:ok, String.t()} | {:error, String.t()}
   def generate(model, prompt, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 30_000)
+    timeout = Keyword.get(opts, :timeout, Config.ollama_timeout())
     url = build_url(opts)
 
     body =
@@ -83,10 +83,7 @@ defmodule Hermes.Ollama do
   end
 
   defp build_url(opts) do
-    base_url =
-      Keyword.get(opts, :base_url) ||
-        Application.get_env(:hermes, :ollama_base_url, @default_base_url)
-
+    base_url = Keyword.get(opts, :base_url) || Config.ollama_url()
     "#{base_url}/api/generate"
   end
 
