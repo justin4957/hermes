@@ -75,12 +75,16 @@ defmodule Hermes.Dispatcher do
   @spec dispatch(String.t(), String.t(), keyword()) :: {:ok, String.t()} | {:error, String.t()}
   def dispatch(model, prompt, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)
-    
+    task_supervisor = Keyword.get(opts, :task_supervisor, Hermes.TaskSupervisor)
+    ollama_module = Keyword.get(opts, :ollama_module, Hermes.Ollama)
+    ollama_opts = Keyword.drop(opts, [:task_supervisor, :ollama_module])
+
     try do
-      task = Task.Supervisor.async_nolink(Hermes.TaskSupervisor, fn ->
-        Hermes.Ollama.generate(model, prompt, timeout: timeout)
-      end)
-      
+      task =
+        Task.Supervisor.async_nolink(task_supervisor, fn ->
+          ollama_module.generate(model, prompt, ollama_opts)
+        end)
+
       case Task.await(task, timeout + 1_000) do
         {:ok, response} -> {:ok, response}
         {:error, reason} -> {:error, reason}
@@ -91,6 +95,7 @@ defmodule Hermes.Dispatcher do
     catch
       :exit, {:timeout, _} ->
         {:error, "Request timeout after #{timeout}ms"}
+
       :exit, reason ->
         {:error, "Task exit: #{inspect(reason)}"}
     end
