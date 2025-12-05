@@ -20,4 +20,13 @@ config :hermes, :ollama,
 config :logger, :console,
   level: :info,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id, :model, :status, :duration_ms]
+  metadata: [
+    :request_id,
+    :model,
+    :status,
+    :duration_ms,
+    :http_status,
+    :error,
+    :response_length,
+    :prompt_length
+  ]

@@ -70,8 +70,11 @@ defmodule Hermes.RouterTest do
       assert conn.status == 400
     end
 
+    @tag timeout: 180_000
     test "accepts different model names in path" do
-      models = ["gemma", "llama3", "mistral", "codellama", "phi"]
+      # Test that routes exist for various model names
+      # Note: This test makes real connections so it may take time if Ollama isn't running
+      models = ["gemma", "llama3", "mistral"]
 
       for model <- models do
         conn =

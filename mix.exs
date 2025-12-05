@@ -15,6 +15,10 @@ defmodule Hermes.MixProject do
         "coveralls.detail": :test,
         "coveralls.html": :test
       ],
+      dialyzer: [
+        plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
+        plt_add_apps: [:mix]
+      ],
 
       # Docs
       name: "Hermes",
@@ -43,6 +47,10 @@ defmodule Hermes.MixProject do
       {:finch, "~> 0.16"},
       {:jason, "~> 1.4"},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
+
+      # Code quality
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
 
       # Testing
       {:mox, "~> 1.1", only: :test},

@@ -19,4 +19,15 @@ config :logger, level: :warning
 # Configure console output for tests
 config :logger, :console,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id, :model]
+  metadata: [
+    :request_id,
+    :model,
+    :http_status,
+    :url,
+    :timeout,
+    :timeout_ms,
+    :reason,
+    :error,
+    :response_length,
+    :prompt_length
+  ]
