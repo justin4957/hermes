@@ -109,14 +109,77 @@ curl http://localhost:4020/v1/status
 
 ## Configuration
 
-Configure models and resource limits in `config/config.exs`:
+Hermes can be configured via environment variables or application config files. Environment variables take precedence over config file settings.
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | HTTP server port | `4020` |
+| `OLLAMA_URL` | Ollama server base URL | `http://localhost:11434` |
+| `OLLAMA_TIMEOUT` | Default request timeout (milliseconds) | `30000` |
+
+**Example:**
+```bash
+PORT=8080 OLLAMA_URL=http://ollama:11434 iex -S mix
+```
+
+### Application Config
+
+Configure in `config/config.exs` or environment-specific files (`dev.exs`, `prod.exs`, `test.exs`):
+
+#### HTTP Server
 
 ```elixir
-config :llm_sidecar, :models,
+config :hermes, :http,
+  port: 4020
+```
+
+#### Ollama Connection
+
+```elixir
+config :hermes, :ollama,
+  base_url: "http://localhost:11434",
+  timeout: 30_000  # Default timeout in milliseconds
+```
+
+#### Model-Specific Configuration
+
+Each model can have its own timeout, concurrency limits, and resource settings:
+
+```elixir
+config :hermes, :models,
   gemma: %{max_concurrency: 2, memory_cost: :medium, timeout: 30_000},
   llama3: %{max_concurrency: 1, memory_cost: :high, timeout: 45_000},
-  mistral: %{max_concurrency: 2, memory_cost: :medium, timeout: 30_000}
+  mistral: %{max_concurrency: 2, memory_cost: :medium, timeout: 30_000},
+  codellama: %{max_concurrency: 1, memory_cost: :high, timeout: 60_000}
 ```
+
+**Model Config Options:**
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `timeout` | integer | Request timeout in milliseconds |
+| `max_concurrency` | integer | Maximum concurrent requests for this model |
+| `memory_cost` | atom | Memory usage category (`:low`, `:medium`, `:high`) |
+
+### Configuration Priority
+
+Values are resolved in the following order (highest to lowest priority):
+
+1. Environment variables (`PORT`, `OLLAMA_URL`, `OLLAMA_TIMEOUT`)
+2. Environment-specific config (`dev.exs`, `prod.exs`, `test.exs`)
+3. Base config (`config.exs`)
+4. Default values in code
+
+### Timeout Resolution
+
+When a request is made, the timeout is determined by:
+
+1. Explicit timeout passed in the request (if any)
+2. Model-specific timeout from config
+3. Default Ollama timeout from config
+4. Built-in default (30 seconds)
 
 ## Architecture
 
@@ -168,16 +231,41 @@ Comprehensive API documentation is available:
 
 ## Production Deployment
 
-Set environment variables:
-- `PORT`: HTTP server port (default: 4020)
-- `OLLAMA_URL`: Ollama server URL (default: http://localhost:11434)
+### Environment Variables
+
+Set these environment variables to configure the production deployment:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | HTTP server port | `4020` |
+| `OLLAMA_URL` | Ollama server URL | `http://localhost:11434` |
+| `OLLAMA_TIMEOUT` | Request timeout (ms) | `30000` |
+
+### Building and Running
 
 ```bash
 # Build release
 MIX_ENV=prod mix release
 
-# Run in production
-PORT=4020 OLLAMA_URL=http://ollama:11434 _build/prod/rel/hermes/bin/hermes start
+# Run in production with custom configuration
+PORT=8080 OLLAMA_URL=http://ollama:11434 _build/prod/rel/hermes/bin/hermes start
+```
+
+### Docker Example
+
+```dockerfile
+FROM elixir:1.16-alpine AS build
+WORKDIR /app
+COPY . .
+RUN mix deps.get --only prod
+RUN MIX_ENV=prod mix release
+
+FROM alpine:3.19
+WORKDIR /app
+COPY --from=build /app/_build/prod/rel/hermes ./
+ENV PORT=4020
+ENV OLLAMA_URL=http://ollama:11434
+CMD ["bin/hermes", "start"]
 ```
 
 ## Troubleshooting

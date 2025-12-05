@@ -10,8 +10,16 @@ defmodule Hermes.Dispatcher do
 
   - Spawns supervised async tasks for LLM requests
   - Enforces timeout constraints on long-running operations
+  - Applies model-specific configuration from `config/config.exs`
   - Handles task failures and exits gracefully
   - Provides consistent error reporting
+
+  ## Model Configuration
+
+  Timeouts are resolved in the following priority:
+  1. Explicit `:timeout` option passed to `dispatch/3`
+  2. Model-specific timeout from config (e.g., `config :hermes, :models, llama3: %{timeout: 45_000}`)
+  3. Default Ollama timeout from config (e.g., `config :hermes, :ollama, timeout: 30_000`)
 
   ## Design
 
@@ -23,10 +31,10 @@ defmodule Hermes.Dispatcher do
 
   ## Examples
 
-      # Dispatch with default timeout
+      # Dispatch with model-specific timeout (from config)
       {:ok, response} = Hermes.Dispatcher.dispatch("gemma", "Hello")
 
-      # Dispatch with custom timeout
+      # Dispatch with explicit timeout (overrides config)
       {:ok, response} = Hermes.Dispatcher.dispatch("llama3", "Long prompt...", timeout: 60_000)
 
       # Handle timeout
@@ -35,6 +43,8 @@ defmodule Hermes.Dispatcher do
         {:error, "Request timeout after 1ms"} -> :timeout
       end
   """
+
+  alias Hermes.Config
 
   @doc """
   Dispatches an LLM generation request to a supervised async task.
@@ -74,10 +84,16 @@ defmodule Hermes.Dispatcher do
   """
   @spec dispatch(String.t(), String.t(), keyword()) :: {:ok, String.t()} | {:error, String.t()}
   def dispatch(model, prompt, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 30_000)
+    # Use model-specific timeout if not explicitly provided
+    timeout = Keyword.get(opts, :timeout) || Config.model_timeout(model)
     task_supervisor = Keyword.get(opts, :task_supervisor, Hermes.TaskSupervisor)
     ollama_module = Keyword.get(opts, :ollama_module, Hermes.Ollama)
-    ollama_opts = Keyword.drop(opts, [:task_supervisor, :ollama_module])
+
+    # Build options for Ollama, ensuring timeout is set
+    ollama_opts =
+      opts
+      |> Keyword.drop([:task_supervisor, :ollama_module])
+      |> Keyword.put(:timeout, timeout)
 
     try do
       task =
