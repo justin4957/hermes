@@ -31,7 +31,10 @@ defmodule Hermes.Ollama do
 
   @behaviour Hermes.OllamaBehaviour
 
+  require Logger
+
   alias Hermes.Config
+  alias Hermes.Telemetry
 
   @doc """
   Generates text completion from an Ollama model.
@@ -66,7 +69,9 @@ defmodule Hermes.Ollama do
   @spec generate(String.t(), String.t(), keyword()) :: {:ok, String.t()} | {:error, String.t()}
   def generate(model, prompt, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, Config.ollama_timeout())
+    request_id = Keyword.get(opts, :request_id, Telemetry.generate_request_id())
     url = build_url(opts)
+    finch_name = Keyword.get(opts, :finch_name, Hermes.Finch)
 
     body =
       Jason.encode!(%{
@@ -75,11 +80,72 @@ defmodule Hermes.Ollama do
         stream: false
       })
 
-    finch_name = Keyword.get(opts, :finch_name, Hermes.Finch)
+    start_time = System.monotonic_time()
 
-    Finch.build(:post, url, [{"content-type", "application/json"}], body)
-    |> Finch.request(finch_name, receive_timeout: timeout)
-    |> handle_response()
+    # Emit telemetry start event
+    :telemetry.execute(
+      [:hermes, :ollama, :request, :start],
+      %{system_time: System.system_time()},
+      %{request_id: request_id, model: model, url: url, timeout: timeout}
+    )
+
+    Logger.debug("Ollama HTTP request starting",
+      request_id: request_id,
+      model: model,
+      url: url,
+      timeout: timeout
+    )
+
+    result =
+      Finch.build(:post, url, [{"content-type", "application/json"}], body)
+      |> Finch.request(finch_name, receive_timeout: timeout)
+      |> handle_response()
+
+    # Calculate duration
+    duration = System.monotonic_time() - start_time
+    duration_ms = System.convert_time_unit(duration, :native, :millisecond)
+
+    # Emit telemetry stop event and log
+    {status, http_status} =
+      case result do
+        {:ok, _} -> {:ok, 200}
+        {:error, msg} when is_binary(msg) -> parse_error_status(msg)
+      end
+
+    :telemetry.execute(
+      [:hermes, :ollama, :request, :stop],
+      %{duration: duration},
+      %{request_id: request_id, model: model, status: status, http_status: http_status}
+    )
+
+    log_level = if status == :ok, do: :debug, else: :warning
+
+    Logger.log(log_level, "Ollama HTTP request completed",
+      request_id: request_id,
+      model: model,
+      status: status,
+      http_status: http_status,
+      duration_ms: duration_ms
+    )
+
+    result
+  end
+
+  defp parse_error_status(msg) do
+    cond do
+      String.contains?(msg, "HTTP 4") -> {:error, extract_http_status(msg)}
+      String.contains?(msg, "HTTP 5") -> {:error, extract_http_status(msg)}
+      String.contains?(msg, "timeout") -> {:timeout, 0}
+      String.contains?(msg, "connection") -> {:connection_error, 0}
+      true -> {:error, 0}
+    end
+  end
+
+  defp extract_http_status(msg) do
+    case Regex.run(~r/HTTP (\d+)/, msg) do
+      [_, status] -> String.to_integer(status)
+      _ -> 0
+    end
   end
 
   defp build_url(opts) do

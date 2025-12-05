@@ -13,6 +13,15 @@ defmodule Hermes.Dispatcher do
   - Applies model-specific configuration from `config/config.exs`
   - Handles task failures and exits gracefully
   - Provides consistent error reporting
+  - Emits telemetry events for observability
+
+  ## Telemetry Events
+
+  The dispatcher emits the following telemetry events:
+
+  * `[:hermes, :llm, :start]` - Emitted when dispatch starts
+  * `[:hermes, :llm, :stop]` - Emitted when dispatch completes
+  * `[:hermes, :llm, :exception]` - Emitted on dispatch exception
 
   ## Model Configuration
 
@@ -44,7 +53,10 @@ defmodule Hermes.Dispatcher do
       end
   """
 
+  require Logger
+
   alias Hermes.Config
+  alias Hermes.Telemetry
 
   @doc """
   Dispatches an LLM generation request to a supervised async task.
@@ -86,34 +98,93 @@ defmodule Hermes.Dispatcher do
   def dispatch(model, prompt, opts \\ []) do
     # Use model-specific timeout if not explicitly provided
     timeout = Keyword.get(opts, :timeout) || Config.model_timeout(model)
+    request_id = Keyword.get(opts, :request_id, Telemetry.generate_request_id())
     task_supervisor = Keyword.get(opts, :task_supervisor, Hermes.TaskSupervisor)
     ollama_module = Keyword.get(opts, :ollama_module, Hermes.Ollama)
 
-    # Build options for Ollama, ensuring timeout is set
+    # Build options for Ollama, ensuring timeout and request_id are set
     ollama_opts =
       opts
       |> Keyword.drop([:task_supervisor, :ollama_module])
       |> Keyword.put(:timeout, timeout)
+      |> Keyword.put(:request_id, request_id)
 
-    try do
-      task =
-        Task.Supervisor.async_nolink(task_supervisor, fn ->
-          ollama_module.generate(model, prompt, ollama_opts)
-        end)
+    prompt_length = String.length(prompt)
+    start_time = System.monotonic_time()
 
-      case Task.await(task, timeout + 1_000) do
-        {:ok, response} -> {:ok, response}
-        {:error, reason} -> {:error, reason}
+    # Set logger metadata for this dispatch
+    Logger.metadata(request_id: request_id, model: model)
+
+    # Emit telemetry start event
+    :telemetry.execute(
+      [:hermes, :llm, :start],
+      %{system_time: System.system_time()},
+      %{request_id: request_id, model: model, prompt_length: prompt_length, timeout: timeout}
+    )
+
+    result =
+      try do
+        task =
+          Task.Supervisor.async_nolink(task_supervisor, fn ->
+            # Propagate logger metadata to the task
+            Logger.metadata(request_id: request_id, model: model)
+            ollama_module.generate(model, prompt, ollama_opts)
+          end)
+
+        case Task.await(task, timeout + 1_000) do
+          {:ok, response} -> {:ok, response}
+          {:error, reason} -> {:error, reason}
+        end
+      rescue
+        error ->
+          Logger.error("Task execution failed",
+            request_id: request_id,
+            model: model,
+            error: inspect(error)
+          )
+
+          {:error, "Task execution failed: #{inspect(error)}"}
+      catch
+        :exit, {:timeout, _} ->
+          Logger.warning("Request timeout",
+            request_id: request_id,
+            model: model,
+            timeout_ms: timeout
+          )
+
+          {:error, "Request timeout after #{timeout}ms"}
+
+        :exit, reason ->
+          Logger.error("Task exit",
+            request_id: request_id,
+            model: model,
+            reason: inspect(reason)
+          )
+
+          {:error, "Task exit: #{inspect(reason)}"}
       end
-    rescue
-      error ->
-        {:error, "Task execution failed: #{inspect(error)}"}
-    catch
-      :exit, {:timeout, _} ->
-        {:error, "Request timeout after #{timeout}ms"}
 
-      :exit, reason ->
-        {:error, "Task exit: #{inspect(reason)}"}
-    end
+    # Calculate duration and emit telemetry stop event
+    duration = System.monotonic_time() - start_time
+
+    {status, response_length} =
+      case result do
+        {:ok, response} -> {:ok, String.length(response)}
+        {:error, _} -> {:error, 0}
+      end
+
+    :telemetry.execute(
+      [:hermes, :llm, :stop],
+      %{duration: duration},
+      %{
+        request_id: request_id,
+        model: model,
+        status: status,
+        response_length: response_length,
+        result: result
+      }
+    )
+
+    result
   end
 end
