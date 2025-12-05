@@ -15,3 +15,8 @@ config :hermes, :models,
 
 # Print only warnings and errors during test
 config :logger, level: :warning
+
+# Configure console output for tests
+config :logger, :console,
+  format: "$time $metadata[$level] $message\n",
+  metadata: [:request_id, :model]

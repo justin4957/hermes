@@ -5,6 +5,21 @@ defmodule Hermes.Router do
   This module uses Plug.Router to define RESTful HTTP endpoints for submitting
   prompts to LLM models and checking system health. All responses are JSON-encoded.
 
+  ## Request Tracking
+
+  All requests are assigned a unique request ID via the `x-request-id` header.
+  If a request ID is provided by the client, it will be preserved; otherwise,
+  a new one is generated. The request ID is included in all log entries and
+  propagated through the request lifecycle for tracing.
+
+  ## Telemetry Events
+
+  The router emits telemetry events for observability:
+
+  * `[:hermes, :request, :start]` - Request started
+  * `[:hermes, :request, :stop]` - Request completed with status
+  * `[:hermes, :request, :exception]` - Request failed with exception
+
   ## Endpoints
 
   ### POST /v1/llm/:model
@@ -78,8 +93,17 @@ defmodule Hermes.Router do
 
   use Plug.Router
 
+  require Logger
+
+  alias Hermes.Telemetry
+
+  # Add request ID for tracing
+  plug(Plug.RequestId)
+  # Telemetry for request timing
+  plug(Plug.Telemetry, event_prefix: [:hermes, :request])
   plug(:match)
   plug(Plug.Parsers, parsers: [:json], json_decoder: Jason)
+  plug(:set_logger_metadata)
   plug(:dispatch)
 
   # POST /v1/llm/:model
@@ -88,17 +112,44 @@ defmodule Hermes.Router do
   # then dispatches the generation request through `Hermes.Dispatcher`.
   # Returns JSON response with either the generated result or an error message.
   post "/v1/llm/:model" do
+    request_id = Telemetry.get_request_id(conn)
+
     case conn.body_params do
       %{"prompt" => prompt} when is_binary(prompt) ->
-        case Hermes.Dispatcher.dispatch(model, prompt) do
+        prompt_length = String.length(prompt)
+
+        Logger.info("LLM request started",
+          request_id: request_id,
+          model: model,
+          prompt_length: prompt_length
+        )
+
+        case Hermes.Dispatcher.dispatch(model, prompt, request_id: request_id) do
           {:ok, response} ->
+            Logger.info("LLM request completed",
+              request_id: request_id,
+              model: model,
+              response_length: String.length(response)
+            )
+
             send_resp(conn, 200, Jason.encode!(%{result: response}))
 
           {:error, reason} ->
+            Logger.error("LLM request failed",
+              request_id: request_id,
+              model: model,
+              error: inspect(reason)
+            )
+
             send_resp(conn, 500, Jason.encode!(%{error: inspect(reason)}))
         end
 
       _other ->
+        Logger.warning("Invalid LLM request: missing prompt",
+          request_id: request_id,
+          model: model
+        )
+
         send_resp(conn, 400, Jason.encode!(%{error: "Missing 'prompt' field or invalid JSON"}))
     end
   end
@@ -126,6 +177,28 @@ defmodule Hermes.Router do
   # Catch-all handler for undefined routes.
   # Returns 404 Not Found for any request that doesn't match defined endpoints.
   match _ do
+    request_id = Telemetry.get_request_id(conn)
+
+    Logger.debug("Route not found",
+      request_id: request_id,
+      method: conn.method,
+      path: conn.request_path
+    )
+
     send_resp(conn, 404, Jason.encode!(%{error: "Not found"}))
+  end
+
+  # Private plugs
+
+  defp set_logger_metadata(conn, _opts) do
+    request_id = Telemetry.get_request_id(conn)
+
+    Logger.metadata(
+      request_id: request_id,
+      method: conn.method,
+      path: conn.request_path
+    )
+
+    conn
   end
 end

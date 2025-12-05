@@ -16,7 +16,8 @@ config :hermes, :ollama,
   base_url: "http://localhost:11434",
   timeout: 30_000
 
-# Minimal logging in production
+# Structured logging in production with metadata
 config :logger, :console,
   level: :info,
-  format: "$time [$level] $message\n"
+  format: "$time $metadata[$level] $message\n",
+  metadata: [:request_id, :model, :status, :duration_ms]
