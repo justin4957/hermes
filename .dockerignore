@@ -1,0 +1,41 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+_build
+deps
+*.ez
+
+# Generated files
+doc
+cover
+.fetch
+
+# Editor files
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files
+test
+*.exs
+!mix.exs
+
+# CI/CD
+.github
+
+# Documentation
+*.md
+!README.md
+openapi.yaml
+examples
+
+# PLT files
+priv/plts

@@ -1,5 +1,8 @@
 # Hermes - LLM Sidecar Service
 
+[![CI](https://github.com/justin4957/hermes/actions/workflows/ci.yml/badge.svg)](https://github.com/justin4957/hermes/actions/workflows/ci.yml)
+[![Coverage Status](https://coveralls.io/repos/github/justin4957/hermes/badge.svg?branch=main)](https://coveralls.io/github/justin4957/hermes?branch=main)
+
 A minimal, efficient Elixir-based sidecar service that interfaces with Ollama to serve and scale local LLM requests.
 
 ## Features

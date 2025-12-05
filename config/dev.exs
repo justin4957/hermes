@@ -13,4 +13,19 @@ config :hermes, :ollama,
 config :logger, :console,
   level: :debug,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id, :model, :method, :path, :status, :duration_ms]
+  metadata: [
+    :request_id,
+    :model,
+    :method,
+    :path,
+    :status,
+    :duration_ms,
+    :http_status,
+    :url,
+    :timeout,
+    :timeout_ms,
+    :reason,
+    :error,
+    :response_length,
+    :prompt_length
+  ]
