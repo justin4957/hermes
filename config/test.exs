@@ -11,7 +11,8 @@ config :hermes, :ollama,
 config :hermes, :models,
   gemma: %{max_concurrency: 2, memory_cost: :medium, timeout: 5_000},
   llama3: %{max_concurrency: 1, memory_cost: :high, timeout: 10_000},
-  mistral: %{max_concurrency: 2, memory_cost: :medium, timeout: 5_000}
+  mistral: %{max_concurrency: 2, memory_cost: :medium, timeout: 5_000},
+  phi: %{max_concurrency: 3, memory_cost: :low, timeout: 5_000}
 
 # Print only warnings and errors during test
 config :logger, level: :warning
@@ -36,5 +37,8 @@ config :logger, :console,
     :error_type,
     :response_length,
     :prompt_length,
-    :ollama_response
+    :ollama_response,
+    :current,
+    :max,
+    :pid
   ]

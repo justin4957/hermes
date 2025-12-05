@@ -15,8 +15,8 @@ defmodule Hermes.PropertyTest do
   end
 
   describe "Dispatcher property tests" do
-    property "handles any valid model name string", %{supervisor: supervisor} do
-      check all(model <- model_name_generator()) do
+    property "handles configured model names", %{supervisor: supervisor} do
+      check all(model <- configured_model_generator()) do
         Hermes.OllamaMock
         |> stub(:generate, fn _model, _prompt, _opts ->
           {:ok, "response"}
@@ -25,10 +25,29 @@ defmodule Hermes.PropertyTest do
         result =
           Dispatcher.dispatch(model, "test prompt",
             task_supervisor: supervisor,
-            ollama_module: Hermes.OllamaMock
+            ollama_module: Hermes.OllamaMock,
+            skip_concurrency: true
           )
 
         assert {:ok, "response"} = result
+      end
+    end
+
+    property "rejects unconfigured model names", %{supervisor: supervisor} do
+      check all(model <- unconfigured_model_generator()) do
+        Hermes.OllamaMock
+        |> stub(:generate, fn _model, _prompt, _opts ->
+          {:ok, "response"}
+        end)
+
+        result =
+          Dispatcher.dispatch(model, "test prompt",
+            task_supervisor: supervisor,
+            ollama_module: Hermes.OllamaMock,
+            skip_concurrency: true
+          )
+
+        assert {:error, %Hermes.Error.ModelNotConfiguredError{model: ^model}} = result
       end
     end
 
@@ -43,7 +62,8 @@ defmodule Hermes.PropertyTest do
         result =
           Dispatcher.dispatch("gemma", prompt,
             task_supervisor: supervisor,
-            ollama_module: Hermes.OllamaMock
+            ollama_module: Hermes.OllamaMock,
+            skip_concurrency: true
           )
 
         assert {:ok, "response"} = result
@@ -62,14 +82,15 @@ defmodule Hermes.PropertyTest do
           Dispatcher.dispatch("gemma", "test",
             timeout: timeout,
             task_supervisor: supervisor,
-            ollama_module: Hermes.OllamaMock
+            ollama_module: Hermes.OllamaMock,
+            skip_concurrency: true
           )
 
         assert {:ok, "response"} = result
       end
     end
 
-    property "error responses are always {:error, string}", %{supervisor: supervisor} do
+    property "error responses are always {:error, term}", %{supervisor: supervisor} do
       check all(error_message <- StreamData.string(:alphanumeric, min_length: 1)) do
         Hermes.OllamaMock
         |> stub(:generate, fn _model, _prompt, _opts ->
@@ -79,7 +100,8 @@ defmodule Hermes.PropertyTest do
         result =
           Dispatcher.dispatch("gemma", "test",
             task_supervisor: supervisor,
-            ollama_module: Hermes.OllamaMock
+            ollama_module: Hermes.OllamaMock,
+            skip_concurrency: true
           )
 
         assert {:error, ^error_message} = result
@@ -96,7 +118,8 @@ defmodule Hermes.PropertyTest do
         result =
           Dispatcher.dispatch("gemma", "test",
             task_supervisor: supervisor,
-            ollama_module: Hermes.OllamaMock
+            ollama_module: Hermes.OllamaMock,
+            skip_concurrency: true
           )
 
         assert {:ok, ^response} = result
@@ -158,6 +181,22 @@ defmodule Hermes.PropertyTest do
 
   # Custom generators
 
+  # Generator for configured model names only
+  defp configured_model_generator do
+    StreamData.member_of(["gemma", "llama3", "mistral", "codellama", "phi"])
+  end
+
+  # Generator for unconfigured model names (random alphanumeric that don't match configured models)
+  defp unconfigured_model_generator do
+    configured = ["gemma", "llama3", "mistral", "codellama", "phi"]
+
+    StreamData.filter(
+      StreamData.string(:alphanumeric, min_length: 1, max_length: 50),
+      fn model -> model not in configured end
+    )
+  end
+
+  # Generator for any model name (including random ones for JSON tests)
   defp model_name_generator do
     StreamData.one_of([
       StreamData.constant("gemma"),

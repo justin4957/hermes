@@ -27,27 +27,30 @@ defmodule Hermes.DispatcherTest do
       result =
         Dispatcher.dispatch("gemma", "What is the meaning of life?",
           task_supervisor: supervisor,
-          ollama_module: Hermes.OllamaMock
+          ollama_module: Hermes.OllamaMock,
+          skip_concurrency: true
         )
 
       assert {:ok, ^expected_response} = result
     end
 
     test "propagates error from Ollama client", %{supervisor: supervisor} do
-      error = Error.ModelNotFoundError.new("invalid")
+      # Using "gemma" since "invalid" is not a configured model
+      error = Error.ModelNotFoundError.new("gemma")
 
       Hermes.OllamaMock
-      |> expect(:generate, fn "invalid", "test", _opts ->
+      |> expect(:generate, fn "gemma", "test", _opts ->
         {:error, error}
       end)
 
       result =
-        Dispatcher.dispatch("invalid", "test",
+        Dispatcher.dispatch("gemma", "test",
           task_supervisor: supervisor,
-          ollama_module: Hermes.OllamaMock
+          ollama_module: Hermes.OllamaMock,
+          skip_concurrency: true
         )
 
-      assert {:error, %Error.ModelNotFoundError{model: "invalid"}} = result
+      assert {:error, %Error.ModelNotFoundError{model: "gemma"}} = result
     end
 
     test "handles timeout from task await", %{supervisor: supervisor} do
@@ -62,7 +65,8 @@ defmodule Hermes.DispatcherTest do
         Dispatcher.dispatch("gemma", "test",
           timeout: 100,
           task_supervisor: supervisor,
-          ollama_module: Hermes.OllamaMock
+          ollama_module: Hermes.OllamaMock,
+          skip_concurrency: true
         )
 
       assert {:error, %Error.TimeoutError{timeout_ms: 100}} = result
@@ -78,7 +82,8 @@ defmodule Hermes.DispatcherTest do
       result =
         Dispatcher.dispatch("gemma", "test",
           task_supervisor: supervisor,
-          ollama_module: Hermes.OllamaMock
+          ollama_module: Hermes.OllamaMock,
+          skip_concurrency: true
         )
 
       assert {:ok, "response"} = result
@@ -97,7 +102,8 @@ defmodule Hermes.DispatcherTest do
         Dispatcher.dispatch("gemma", "test",
           timeout: custom_timeout,
           task_supervisor: supervisor,
-          ollama_module: Hermes.OllamaMock
+          ollama_module: Hermes.OllamaMock,
+          skip_concurrency: true
         )
 
       assert {:ok, "response"} = result
@@ -112,7 +118,8 @@ defmodule Hermes.DispatcherTest do
       result =
         Dispatcher.dispatch("gemma", "test",
           task_supervisor: supervisor,
-          ollama_module: Hermes.OllamaMock
+          ollama_module: Hermes.OllamaMock,
+          skip_concurrency: true
         )
 
       assert {:error, %Error.InternalError{}} = result
@@ -130,19 +137,22 @@ defmodule Hermes.DispatcherTest do
         Task.async(fn ->
           Dispatcher.dispatch("gemma", "Hello",
             task_supervisor: supervisor,
-            ollama_module: Hermes.OllamaMock
+            ollama_module: Hermes.OllamaMock,
+            skip_concurrency: true
           )
         end),
         Task.async(fn ->
           Dispatcher.dispatch("llama3", "World",
             task_supervisor: supervisor,
-            ollama_module: Hermes.OllamaMock
+            ollama_module: Hermes.OllamaMock,
+            skip_concurrency: true
           )
         end),
         Task.async(fn ->
           Dispatcher.dispatch("mistral", "Test",
             task_supervisor: supervisor,
-            ollama_module: Hermes.OllamaMock
+            ollama_module: Hermes.OllamaMock,
+            skip_concurrency: true
           )
         end)
       ]
@@ -169,7 +179,8 @@ defmodule Hermes.DispatcherTest do
       result =
         Dispatcher.dispatch(model, prompt,
           task_supervisor: supervisor,
-          ollama_module: Hermes.OllamaMock
+          ollama_module: Hermes.OllamaMock,
+          skip_concurrency: true
         )
 
       assert {:ok, "def factorial(n): ..."} = result
@@ -184,7 +195,8 @@ defmodule Hermes.DispatcherTest do
       result =
         Dispatcher.dispatch("gemma", "test",
           task_supervisor: supervisor,
-          ollama_module: Hermes.OllamaMock
+          ollama_module: Hermes.OllamaMock,
+          skip_concurrency: true
         )
 
       assert {:ok, ""} = result
@@ -201,10 +213,22 @@ defmodule Hermes.DispatcherTest do
       result =
         Dispatcher.dispatch("gemma", unicode_prompt,
           task_supervisor: supervisor,
-          ollama_module: Hermes.OllamaMock
+          ollama_module: Hermes.OllamaMock,
+          skip_concurrency: true
         )
 
       assert {:ok, "Hello World 🌍"} = result
+    end
+
+    test "rejects unconfigured models", %{supervisor: supervisor} do
+      result =
+        Dispatcher.dispatch("unknown_model", "test",
+          task_supervisor: supervisor,
+          ollama_module: Hermes.OllamaMock,
+          skip_concurrency: true
+        )
+
+      assert {:error, %Error.ModelNotConfiguredError{model: "unknown_model"}} = result
     end
   end
 end

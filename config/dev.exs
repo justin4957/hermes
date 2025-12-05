@@ -30,5 +30,8 @@ config :logger, :console,
     :error_type,
     :response_length,
     :prompt_length,
-    :ollama_response
+    :ollama_response,
+    :current,
+    :max,
+    :pid
   ]

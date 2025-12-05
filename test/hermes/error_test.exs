@@ -4,8 +4,10 @@ defmodule Hermes.ErrorTest do
   alias Hermes.Error
 
   alias Hermes.Error.{
+    ConcurrencyLimitError,
     ConnectionError,
     InternalError,
+    ModelNotConfiguredError,
     ModelNotFoundError,
     OllamaError,
     TimeoutError,
@@ -48,6 +50,54 @@ defmodule Hermes.ErrorTest do
     end
   end
 
+  describe "ModelNotConfiguredError" do
+    test "creates error with model name" do
+      error = ModelNotConfiguredError.new("unknown")
+
+      assert error.model == "unknown"
+      assert error.message =~ "unknown"
+      assert error.message =~ "not configured"
+      assert error.available_models == []
+    end
+
+    test "creates error with available models" do
+      error = ModelNotConfiguredError.new("unknown", [:gemma, :llama3])
+
+      assert error.model == "unknown"
+      assert error.available_models == [:gemma, :llama3]
+      assert error.message =~ "gemma"
+      assert error.message =~ "llama3"
+    end
+
+    test "http_status returns 404" do
+      error = ModelNotConfiguredError.new("test")
+      assert Error.http_status(error) == 404
+    end
+
+    test "type returns :model_not_configured" do
+      error = ModelNotConfiguredError.new("test")
+      assert Error.type(error) == :model_not_configured
+    end
+
+    test "to_map includes model and available_models" do
+      error = ModelNotConfiguredError.new("unknown", [:gemma, :llama3])
+      map = Error.to_map(error)
+
+      assert map.type == "model_not_configured"
+      assert map.model == "unknown"
+      assert map.available_models == ["gemma", "llama3"]
+    end
+
+    test "to_map excludes available_models when empty" do
+      error = ModelNotConfiguredError.new("unknown", [])
+      map = Error.to_map(error)
+
+      assert map.type == "model_not_configured"
+      assert map.model == "unknown"
+      refute Map.has_key?(map, :available_models)
+    end
+  end
+
   describe "ModelNotFoundError" do
     test "creates error with model name" do
       error = ModelNotFoundError.new("gemma")
@@ -73,6 +123,39 @@ defmodule Hermes.ErrorTest do
 
       assert map.type == "model_not_found"
       assert map.model == "llama3"
+    end
+  end
+
+  describe "ConcurrencyLimitError" do
+    test "creates error with model and limits" do
+      error = ConcurrencyLimitError.new("gemma", 2, 2)
+
+      assert error.model == "gemma"
+      assert error.max_concurrency == 2
+      assert error.current_count == 2
+      assert error.message =~ "gemma"
+      assert error.message =~ "capacity"
+      assert error.message =~ "2/2"
+    end
+
+    test "http_status returns 429" do
+      error = ConcurrencyLimitError.new("gemma", 2, 2)
+      assert Error.http_status(error) == 429
+    end
+
+    test "type returns :concurrency_limit" do
+      error = ConcurrencyLimitError.new("gemma", 2, 2)
+      assert Error.type(error) == :concurrency_limit
+    end
+
+    test "to_map includes all concurrency info" do
+      error = ConcurrencyLimitError.new("gemma", 2, 2)
+      map = Error.to_map(error)
+
+      assert map.type == "concurrency_limit"
+      assert map.model == "gemma"
+      assert map.max_concurrency == 2
+      assert map.current == 2
     end
   end
 
