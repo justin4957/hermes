@@ -29,7 +29,9 @@ defmodule Hermes.Ollama do
       end
   """
 
-  @url "http://localhost:11434/api/generate"
+  @behaviour Hermes.OllamaBehaviour
+
+  @default_base_url "http://localhost:11434"
 
   @doc """
   Generates text completion from an Ollama model.
@@ -64,24 +66,38 @@ defmodule Hermes.Ollama do
   @spec generate(String.t(), String.t(), keyword()) :: {:ok, String.t()} | {:error, String.t()}
   def generate(model, prompt, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)
-    
-    body = Jason.encode!(%{
-      model: model, 
-      prompt: prompt, 
-      stream: false
-    })
+    url = build_url(opts)
 
-    Finch.build(:post, @url, [{"content-type", "application/json"}], body)
-    |> Finch.request(Hermes.Finch, receive_timeout: timeout)
+    body =
+      Jason.encode!(%{
+        model: model,
+        prompt: prompt,
+        stream: false
+      })
+
+    finch_name = Keyword.get(opts, :finch_name, Hermes.Finch)
+
+    Finch.build(:post, url, [{"content-type", "application/json"}], body)
+    |> Finch.request(finch_name, receive_timeout: timeout)
     |> handle_response()
+  end
+
+  defp build_url(opts) do
+    base_url =
+      Keyword.get(opts, :base_url) ||
+        Application.get_env(:hermes, :ollama_base_url, @default_base_url)
+
+    "#{base_url}/api/generate"
   end
 
   defp handle_response({:ok, %{status: 200, body: resp_body}}) do
     case Jason.decode(resp_body) do
       {:ok, %{"response" => response}} ->
         {:ok, response}
+
       {:ok, parsed} ->
         {:error, "Unexpected response format: #{inspect(parsed)}"}
+
       {:error, decode_error} ->
         {:error, "JSON decode error: #{inspect(decode_error)}"}
     end

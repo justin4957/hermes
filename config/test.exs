@@ -1,8 +1,7 @@
 import Config
 
 # Test environment configuration
-config :hermes, :http,
-  port: 4021
+config :hermes, :http, port: 4021
 
 config :hermes, :ollama,
   base_url: "http://localhost:11434",

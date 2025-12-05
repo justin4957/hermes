@@ -78,9 +78,9 @@ defmodule Hermes.Router do
 
   use Plug.Router
 
-  plug :match
-  plug Plug.Parsers, parsers: [:json], json_decoder: Jason
-  plug :dispatch
+  plug(:match)
+  plug(Plug.Parsers, parsers: [:json], json_decoder: Jason)
+  plug(:dispatch)
 
   # POST /v1/llm/:model
   # Handles POST requests to generate text from an LLM model.
@@ -93,9 +93,11 @@ defmodule Hermes.Router do
         case Hermes.Dispatcher.dispatch(model, prompt) do
           {:ok, response} ->
             send_resp(conn, 200, Jason.encode!(%{result: response}))
+
           {:error, reason} ->
             send_resp(conn, 500, Jason.encode!(%{error: inspect(reason)}))
         end
+
       _other ->
         send_resp(conn, 400, Jason.encode!(%{error: "Missing 'prompt' field or invalid JSON"}))
     end
@@ -107,6 +109,7 @@ defmodule Hermes.Router do
   # useful for monitoring and health checks.
   get "/v1/status" do
     memory_info = :erlang.memory()
+
     system_info = %{
       status: "ok",
       memory: %{
@@ -116,7 +119,7 @@ defmodule Hermes.Router do
       },
       schedulers: System.schedulers_online()
     }
-    
+
     send_resp(conn, 200, Jason.encode!(system_info))
   end
 

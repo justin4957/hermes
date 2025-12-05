@@ -1,8 +1,7 @@
 import Config
 
 # Development environment configuration
-config :hermes, :http,
-  port: 4020
+config :hermes, :http, port: 4020
 
 config :hermes, :ollama,
   base_url: "http://localhost:11434",

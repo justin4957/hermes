@@ -1,8 +1,7 @@
 import Config
 
 # Production environment configuration
-config :hermes, :http,
-  port: {:system, "PORT", "4020"}
+config :hermes, :http, port: {:system, "PORT", "4020"}
 
 config :hermes, :ollama,
   base_url: {:system, "OLLAMA_URL", "http://localhost:11434"},
