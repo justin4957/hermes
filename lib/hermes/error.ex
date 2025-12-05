@@ -33,12 +33,12 @@ defmodule Hermes.Error do
   """
 
   @type error ::
-          ValidationError.t()
-          | ModelNotFoundError.t()
-          | TimeoutError.t()
-          | OllamaError.t()
-          | InternalError.t()
-          | ConnectionError.t()
+          Hermes.Error.ValidationError.t()
+          | Hermes.Error.ModelNotFoundError.t()
+          | Hermes.Error.TimeoutError.t()
+          | Hermes.Error.OllamaError.t()
+          | Hermes.Error.InternalError.t()
+          | Hermes.Error.ConnectionError.t()
 
   defmodule ValidationError do
     @moduledoc """
