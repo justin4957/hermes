@@ -4,6 +4,7 @@ defmodule Hermes.DispatcherTest do
   import Mox
 
   alias Hermes.Dispatcher
+  alias Hermes.Error
 
   setup :verify_on_exit!
 
@@ -33,11 +34,11 @@ defmodule Hermes.DispatcherTest do
     end
 
     test "propagates error from Ollama client", %{supervisor: supervisor} do
-      error_message = "HTTP 404: model not found"
+      error = Error.ModelNotFoundError.new("invalid")
 
       Hermes.OllamaMock
       |> expect(:generate, fn "invalid", "test", _opts ->
-        {:error, error_message}
+        {:error, error}
       end)
 
       result =
@@ -46,7 +47,7 @@ defmodule Hermes.DispatcherTest do
           ollama_module: Hermes.OllamaMock
         )
 
-      assert {:error, ^error_message} = result
+      assert {:error, %Error.ModelNotFoundError{model: "invalid"}} = result
     end
 
     test "handles timeout from task await", %{supervisor: supervisor} do
@@ -64,8 +65,7 @@ defmodule Hermes.DispatcherTest do
           ollama_module: Hermes.OllamaMock
         )
 
-      assert {:error, message} = result
-      assert message =~ "timeout" or message =~ "exit"
+      assert {:error, %Error.TimeoutError{timeout_ms: 100}} = result
     end
 
     test "uses default timeout of 30000ms", %{supervisor: supervisor} do
@@ -115,8 +115,7 @@ defmodule Hermes.DispatcherTest do
           ollama_module: Hermes.OllamaMock
         )
 
-      assert {:error, message} = result
-      assert message =~ "exit" or message =~ "Task"
+      assert {:error, %Error.InternalError{}} = result
     end
 
     test "handles multiple concurrent requests", %{supervisor: supervisor} do

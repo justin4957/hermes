@@ -24,9 +24,12 @@ config :logger, :console,
     :request_id,
     :model,
     :status,
+    :status_code,
     :duration_ms,
     :http_status,
     :error,
+    :error_type,
     :response_length,
-    :prompt_length
+    :prompt_length,
+    :ollama_response
   ]

@@ -56,6 +56,7 @@ defmodule Hermes.Dispatcher do
   require Logger
 
   alias Hermes.Config
+  alias Hermes.Error
   alias Hermes.Telemetry
 
   @doc """
@@ -76,15 +77,14 @@ defmodule Hermes.Dispatcher do
   ## Returns
 
     * `{:ok, response}` - Successfully generated response text
-    * `{:error, reason}` - Error description (timeout, task failure, etc.)
+    * `{:error, error}` - Structured error (see `Hermes.Error`)
 
-  ## Error Handling
+  ## Error Types
 
-  The function handles several error cases:
-  - Task execution failures (exceptions in the worker)
-  - Task timeouts (exceeds specified duration)
-  - Task exits (abnormal termination)
-  - Ollama API errors (propagated from client)
+  The function may return the following error types:
+  - `Hermes.Error.TimeoutError` - Request exceeded timeout
+  - `Hermes.Error.InternalError` - Task execution failures or exits
+  - Other errors propagated from `Hermes.Ollama`
 
   ## Examples
 
@@ -92,9 +92,10 @@ defmodule Hermes.Dispatcher do
       {:ok, "The answer is 4."}
 
       iex> Hermes.Dispatcher.dispatch("gemma", "test", timeout: 1)
-      {:error, "Request timeout after 1ms"}
+      {:error, %Hermes.Error.TimeoutError{timeout_ms: 1, message: "Request timed out after 1ms"}}
   """
-  @spec dispatch(String.t(), String.t(), keyword()) :: {:ok, String.t()} | {:error, String.t()}
+  @spec dispatch(String.t(), String.t(), keyword()) ::
+          {:ok, String.t()} | {:error, Error.error()}
   def dispatch(model, prompt, opts \\ []) do
     # Use model-specific timeout if not explicitly provided
     timeout = Keyword.get(opts, :timeout) || Config.model_timeout(model)
@@ -133,7 +134,7 @@ defmodule Hermes.Dispatcher do
 
         case Task.await(task, timeout + 1_000) do
           {:ok, response} -> {:ok, response}
-          {:error, reason} -> {:error, reason}
+          {:error, error} -> {:error, error}
         end
       rescue
         error ->
@@ -143,7 +144,7 @@ defmodule Hermes.Dispatcher do
             error: inspect(error)
           )
 
-          {:error, "Task execution failed: #{inspect(error)}"}
+          {:error, Error.InternalError.new("Task execution failed", error)}
       catch
         :exit, {:timeout, _} ->
           Logger.warning("Request timeout",
@@ -152,7 +153,7 @@ defmodule Hermes.Dispatcher do
             timeout_ms: timeout
           )
 
-          {:error, "Request timeout after #{timeout}ms"}
+          {:error, Error.TimeoutError.new(timeout)}
 
         :exit, reason ->
           Logger.error("Task exit",
@@ -161,7 +162,7 @@ defmodule Hermes.Dispatcher do
             reason: inspect(reason)
           )
 
-          {:error, "Task exit: #{inspect(reason)}"}
+          {:error, Error.InternalError.new("Task terminated unexpectedly", reason)}
       end
 
     # Calculate duration and emit telemetry stop event

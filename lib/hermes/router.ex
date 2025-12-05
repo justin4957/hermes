@@ -45,7 +45,11 @@ defmodule Hermes.Router do
 
   **Error Responses:**
   - `400 Bad Request` - Missing or invalid prompt field
-  - `500 Internal Server Error` - Generation failed or timeout
+  - `404 Not Found` - Model not available in Ollama
+  - `408 Request Timeout` - Generation exceeded timeout
+  - `500 Internal Server Error` - Unexpected internal error
+  - `502 Bad Gateway` - Ollama service error
+  - `503 Service Unavailable` - Cannot connect to Ollama
 
   **Example:**
   ```bash
@@ -95,6 +99,7 @@ defmodule Hermes.Router do
 
   require Logger
 
+  alias Hermes.Error
   alias Hermes.Telemetry
 
   # Add request ID for tracing
@@ -134,23 +139,34 @@ defmodule Hermes.Router do
 
             send_resp(conn, 200, Jason.encode!(%{result: response}))
 
-          {:error, reason} ->
+          {:error, error} ->
+            status_code = Error.http_status(error)
+            error_type = Error.type(error)
+
             Logger.error("LLM request failed",
               request_id: request_id,
               model: model,
-              error: inspect(reason)
+              error_type: error_type,
+              status_code: status_code,
+              error: Error.message(error)
             )
 
-            send_resp(conn, 500, Jason.encode!(%{error: inspect(reason)}))
+            send_resp(conn, status_code, Jason.encode!(Error.to_map(error)))
         end
 
       _other ->
+        validation_error =
+          Error.ValidationError.new(
+            "Missing 'prompt' field or invalid JSON",
+            field: "prompt"
+          )
+
         Logger.warning("Invalid LLM request: missing prompt",
           request_id: request_id,
           model: model
         )
 
-        send_resp(conn, 400, Jason.encode!(%{error: "Missing 'prompt' field or invalid JSON"}))
+        send_resp(conn, 400, Jason.encode!(Error.to_map(validation_error)))
     end
   end
 
