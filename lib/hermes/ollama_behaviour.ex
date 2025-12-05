@@ -6,5 +6,5 @@ defmodule Hermes.OllamaBehaviour do
   """
 
   @callback generate(String.t(), String.t(), keyword()) ::
-              {:ok, String.t()} | {:error, String.t()}
+              {:ok, String.t()} | {:error, Hermes.Error.error()}
 end

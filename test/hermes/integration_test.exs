@@ -138,7 +138,9 @@ defmodule Hermes.IntegrationTest do
           |> Router.call(@opts)
 
         # Should not fail on JSON parsing
-        assert conn.status in [200, 400, 500]
+        # Valid status codes: 200 (success), 400 (validation), 404 (model not found),
+        # 408 (timeout), 500 (internal), 502 (Ollama error), 503 (connection error)
+        assert conn.status in [200, 400, 404, 408, 500, 502, 503]
         assert {:ok, _} = Jason.decode(conn.resp_body)
       end
     end

@@ -1,6 +1,7 @@
 defmodule Hermes.OllamaTest do
   use ExUnit.Case, async: true
 
+  alias Hermes.Error
   alias Hermes.Ollama
 
   setup do
@@ -59,9 +60,7 @@ defmodule Hermes.OllamaTest do
           finch_name: ctx.finch_name
         )
 
-      assert {:error, message} = result
-      assert message =~ "HTTP 404"
-      assert message =~ "model"
+      assert {:error, %Error.ModelNotFoundError{model: "invalid"}} = result
     end
 
     test "returns error for 500 HTTP status", ctx do
@@ -77,7 +76,7 @@ defmodule Hermes.OllamaTest do
           finch_name: ctx.finch_name
         )
 
-      assert {:error, "HTTP 500: Internal server error"} = result
+      assert {:error, %Error.OllamaError{status_code: 500}} = result
     end
 
     test "handles connection refused error", ctx do
@@ -90,9 +89,7 @@ defmodule Hermes.OllamaTest do
           finch_name: ctx.finch_name
         )
 
-      assert {:error, message} = result
-      assert message =~ "Request failed"
-      assert message =~ "econnrefused"
+      assert {:error, %Error.ConnectionError{}} = result
     end
 
     @tag :skip
@@ -132,8 +129,8 @@ defmodule Hermes.OllamaTest do
           finch_name: ctx.finch_name
         )
 
-      assert {:error, message} = result
-      assert message =~ "JSON decode error"
+      assert {:error, %Error.InternalError{message: message}} = result
+      assert message =~ "decode"
     end
 
     test "handles response without 'response' field", ctx do
@@ -155,7 +152,7 @@ defmodule Hermes.OllamaTest do
           finch_name: ctx.finch_name
         )
 
-      assert {:error, message} = result
+      assert {:error, %Error.InternalError{message: message}} = result
       assert message =~ "Unexpected response format"
     end
 

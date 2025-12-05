@@ -34,6 +34,7 @@ defmodule Hermes.Ollama do
   require Logger
 
   alias Hermes.Config
+  alias Hermes.Error
   alias Hermes.Telemetry
 
   @doc """
@@ -53,7 +54,15 @@ defmodule Hermes.Ollama do
   ## Returns
 
     * `{:ok, response}` - On success, returns the generated text response
-    * `{:error, reason}` - On failure, returns error description
+    * `{:error, error}` - On failure, returns a structured error
+
+  ## Error Types
+
+    * `Hermes.Error.ModelNotFoundError` - Model not available in Ollama
+    * `Hermes.Error.TimeoutError` - Request exceeded timeout
+    * `Hermes.Error.ConnectionError` - Cannot connect to Ollama
+    * `Hermes.Error.OllamaError` - Upstream Ollama service error
+    * `Hermes.Error.InternalError` - Unexpected internal error
 
   ## Examples
 
@@ -64,9 +73,10 @@ defmodule Hermes.Ollama do
       {:ok, "2 + 2 = 4"}
 
       iex> Hermes.Ollama.generate("nonexistent", "test")
-      {:error, "HTTP 404: model not found"}
+      {:error, %Hermes.Error.ModelNotFoundError{model: "nonexistent", message: "..."}}
   """
-  @spec generate(String.t(), String.t(), keyword()) :: {:ok, String.t()} | {:error, String.t()}
+  @spec generate(String.t(), String.t(), keyword()) ::
+          {:ok, String.t()} | {:error, Error.error()}
   def generate(model, prompt, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, Config.ollama_timeout())
     request_id = Keyword.get(opts, :request_id, Telemetry.generate_request_id())
@@ -99,18 +109,14 @@ defmodule Hermes.Ollama do
     result =
       Finch.build(:post, url, [{"content-type", "application/json"}], body)
       |> Finch.request(finch_name, receive_timeout: timeout)
-      |> handle_response()
+      |> handle_response(model, url, timeout)
 
     # Calculate duration
     duration = System.monotonic_time() - start_time
     duration_ms = System.convert_time_unit(duration, :native, :millisecond)
 
     # Emit telemetry stop event and log
-    {status, http_status} =
-      case result do
-        {:ok, _} -> {:ok, 200}
-        {:error, msg} when is_binary(msg) -> parse_error_status(msg)
-      end
+    {status, http_status} = error_to_telemetry_status(result)
 
     :telemetry.execute(
       [:hermes, :ollama, :request, :stop],
@@ -131,46 +137,89 @@ defmodule Hermes.Ollama do
     result
   end
 
-  defp parse_error_status(msg) do
-    cond do
-      String.contains?(msg, "HTTP 4") -> {:error, extract_http_status(msg)}
-      String.contains?(msg, "HTTP 5") -> {:error, extract_http_status(msg)}
-      String.contains?(msg, "timeout") -> {:timeout, 0}
-      String.contains?(msg, "connection") -> {:connection_error, 0}
-      true -> {:error, 0}
-    end
-  end
+  defp error_to_telemetry_status({:ok, _}), do: {:ok, 200}
+  defp error_to_telemetry_status({:error, %Error.ModelNotFoundError{}}), do: {:error, 404}
+  defp error_to_telemetry_status({:error, %Error.TimeoutError{}}), do: {:timeout, 0}
+  defp error_to_telemetry_status({:error, %Error.ConnectionError{}}), do: {:connection_error, 0}
 
-  defp extract_http_status(msg) do
-    case Regex.run(~r/HTTP (\d+)/, msg) do
-      [_, status] -> String.to_integer(status)
-      _ -> 0
-    end
-  end
+  defp error_to_telemetry_status({:error, %Error.OllamaError{status_code: status}})
+       when is_integer(status),
+       do: {:error, status}
+
+  defp error_to_telemetry_status({:error, _}), do: {:error, 0}
 
   defp build_url(opts) do
     base_url = Keyword.get(opts, :base_url) || Config.ollama_url()
     "#{base_url}/api/generate"
   end
 
-  defp handle_response({:ok, %{status: 200, body: resp_body}}) do
+  defp handle_response({:ok, %{status: 200, body: resp_body}}, _model, _url, _timeout) do
     case Jason.decode(resp_body) do
       {:ok, %{"response" => response}} ->
         {:ok, response}
 
       {:ok, parsed} ->
-        {:error, "Unexpected response format: #{inspect(parsed)}"}
+        {:error,
+         Error.InternalError.new(
+           "Unexpected response format from Ollama",
+           inspect(parsed)
+         )}
 
       {:error, decode_error} ->
-        {:error, "JSON decode error: #{inspect(decode_error)}"}
+        {:error,
+         Error.InternalError.new(
+           "Failed to decode Ollama response",
+           inspect(decode_error)
+         )}
     end
   end
 
-  defp handle_response({:ok, %{status: status, body: body}}) do
-    {:error, "HTTP #{status}: #{body}"}
+  defp handle_response({:ok, %{status: 404, body: body}}, model, _url, _timeout) do
+    # Model not found
+    Logger.debug("Model not found in Ollama", model: model, ollama_response: body)
+    {:error, Error.ModelNotFoundError.new(model)}
   end
 
-  defp handle_response({:error, reason}) do
-    {:error, "Request failed: #{inspect(reason)}"}
+  defp handle_response({:ok, %{status: status, body: body}}, _model, _url, _timeout)
+       when status >= 500 do
+    # Ollama server error
+    {:error,
+     Error.OllamaError.new(
+       "Ollama service returned an error",
+       status_code: status,
+       upstream_error: body
+     )}
+  end
+
+  defp handle_response({:ok, %{status: status, body: body}}, _model, _url, _timeout) do
+    # Other HTTP errors (4xx)
+    {:error,
+     Error.OllamaError.new(
+       "Ollama request failed with status #{status}",
+       status_code: status,
+       upstream_error: body
+     )}
+  end
+
+  defp handle_response({:error, %Mint.TransportError{reason: :timeout}}, _model, _url, timeout) do
+    {:error, Error.TimeoutError.new(timeout)}
+  end
+
+  defp handle_response({:error, %Mint.TransportError{reason: reason}}, _model, url, _timeout) do
+    {:error,
+     Error.ConnectionError.new(
+       "Cannot connect to Ollama service",
+       url: url,
+       reason: reason
+     )}
+  end
+
+  defp handle_response({:error, reason}, _model, url, _timeout) do
+    {:error,
+     Error.ConnectionError.new(
+       "Request to Ollama failed",
+       url: url,
+       reason: reason
+     )}
   end
 end
