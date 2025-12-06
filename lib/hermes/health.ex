@@ -230,8 +230,6 @@ defmodule Hermes.Health do
   defp format_check_result({:error, reason}) when is_binary(reason),
     do: {:error, String.to_atom(reason)}
 
-  defp format_check_result({:error, reason}), do: {:error, inspect(reason)}
-
   defp determine_overall_status(checks) do
     all_ok =
       Enum.all?(checks, fn
