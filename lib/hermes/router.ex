@@ -60,18 +60,36 @@ defmodule Hermes.Router do
 
   ### GET /v1/status
 
-  Health check endpoint returning system metrics and resource usage.
+  Health check endpoint returning system metrics, dependency status, and resource usage.
+  Suitable for Kubernetes liveness and readiness probes.
 
   **Success Response (200 OK):**
   ```json
   {
-    "status": "ok",
+    "status": "healthy",
+    "checks": {
+      "ollama": "ok"
+    },
+    "version": "0.1.0",
+    "uptime_seconds": 3600,
     "memory": {
       "total": 12345678,
       "processes": 4567890,
       "system": 7890123
     },
-    "schedulers": 8
+    "schedulers": 8,
+    "models": ["gemma", "llama3", "mistral"]
+  }
+  ```
+
+  **Unhealthy Response (503 Service Unavailable):**
+  ```json
+  {
+    "status": "unhealthy",
+    "checks": {
+      "ollama": "error: connection_refused"
+    },
+    ...
   }
   ```
 
@@ -100,6 +118,7 @@ defmodule Hermes.Router do
   require Logger
 
   alias Hermes.Error
+  alias Hermes.Health
   alias Hermes.Telemetry
 
   # Add request ID for tracing
@@ -172,22 +191,14 @@ defmodule Hermes.Router do
 
   # GET /v1/status
   # Handles GET requests for system health and status information.
-  # Returns current BEAM VM memory statistics and scheduler information,
-  # useful for monitoring and health checks.
+  # Performs health checks on dependencies and returns comprehensive status.
+  # Returns 200 if healthy, 503 if any dependency is unhealthy.
   get "/v1/status" do
-    memory_info = :erlang.memory()
+    health = Health.check()
+    status_code = Health.http_status(health)
+    response = Health.to_json(health)
 
-    system_info = %{
-      status: "ok",
-      memory: %{
-        total: memory_info[:total],
-        processes: memory_info[:processes],
-        system: memory_info[:system]
-      },
-      schedulers: System.schedulers_online()
-    }
-
-    send_resp(conn, 200, Jason.encode!(system_info))
+    send_resp(conn, status_code, Jason.encode!(response))
   end
 
   # Catch-all handler for undefined routes.

@@ -20,14 +20,19 @@ defmodule Hermes.IntegrationTest do
         conn(:get, "/v1/status")
         |> Router.call(@opts)
 
-      assert conn.status == 200
+      # Status will be 200 (healthy) or 503 (unhealthy) depending on Ollama availability
+      assert conn.status in [200, 503]
 
       {:ok, body} = Jason.decode(conn.resp_body)
 
-      assert body["status"] == "ok"
+      assert body["status"] in ["healthy", "unhealthy"]
       assert is_map(body["memory"])
       assert is_integer(body["schedulers"])
       assert body["schedulers"] == System.schedulers_online()
+      assert is_binary(body["version"])
+      assert is_integer(body["uptime_seconds"])
+      assert is_map(body["checks"])
+      assert is_list(body["models"])
     end
 
     test "LLM endpoint validates request body" do
@@ -97,9 +102,10 @@ defmodule Hermes.IntegrationTest do
       results = Task.await_many(tasks, 5000)
 
       for conn <- results do
-        assert conn.status == 200
+        # Status will be 200 (healthy) or 503 (unhealthy) depending on Ollama availability
+        assert conn.status in [200, 503]
         {:ok, body} = Jason.decode(conn.resp_body)
-        assert body["status"] == "ok"
+        assert body["status"] in ["healthy", "unhealthy"]
       end
     end
   end

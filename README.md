@@ -46,8 +46,8 @@ A minimal, efficient Elixir-based sidecar service that interfaces with Ollama to
 
 | Endpoint | Method | Description | Status Codes |
 |----------|---------|-------------|--------------|
-| `/v1/llm/:model` | POST | Submit prompt to specified model | 200, 400, 500 |
-| `/v1/status` | GET | Health check and resource usage | 200 |
+| `/v1/llm/:model` | POST | Submit prompt to specified model | 200, 400, 404, 408, 429, 500, 502, 503 |
+| `/v1/status` | GET | Health check and resource usage | 200, 503 |
 
 ### POST /v1/llm/:model
 
@@ -90,18 +90,51 @@ curl -X POST http://localhost:4020/v1/llm/gemma \
 
 ### GET /v1/status
 
-Retrieve system health and resource metrics.
+Retrieve system health, dependency status, and resource metrics. This endpoint is designed for use with Kubernetes liveness and readiness probes.
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | Overall health: `"healthy"` or `"unhealthy"` |
+| `checks` | object | Status of each dependency check |
+| `version` | string | Application version |
+| `uptime_seconds` | integer | Seconds since application start |
+| `memory` | object | BEAM VM memory statistics |
+| `schedulers` | integer | Number of online schedulers |
+| `models` | array | List of configured model names |
 
 **Success Response (200 OK):**
 ```json
 {
-  "status": "ok",
+  "status": "healthy",
+  "checks": {
+    "ollama": "ok"
+  },
+  "version": "0.1.0",
+  "uptime_seconds": 3600,
   "memory": {
     "total": 45678912,
     "processes": 12345678,
     "system": 23456789
   },
-  "schedulers": 8
+  "schedulers": 8,
+  "models": ["gemma", "llama3", "mistral"]
+}
+```
+
+**Unhealthy Response (503 Service Unavailable):**
+```json
+{
+  "status": "unhealthy",
+  "checks": {
+    "ollama": "error: connection_refused"
+  },
+  "version": "0.1.0",
+  "uptime_seconds": 3600,
+  "memory": {...},
+  "schedulers": 8,
+  "models": ["gemma", "llama3", "mistral"]
 }
 ```
 
@@ -109,6 +142,38 @@ Retrieve system health and resource metrics.
 ```bash
 curl http://localhost:4020/v1/status
 ```
+
+### Kubernetes Integration
+
+The `/v1/status` endpoint is designed to work with Kubernetes liveness and readiness probes:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hermes
+spec:
+  containers:
+  - name: hermes
+    image: hermes:latest
+    ports:
+    - containerPort: 4020
+    livenessProbe:
+      httpGet:
+        path: /v1/status
+        port: 4020
+      initialDelaySeconds: 5
+      periodSeconds: 10
+    readinessProbe:
+      httpGet:
+        path: /v1/status
+        port: 4020
+      initialDelaySeconds: 5
+      periodSeconds: 10
+```
+
+- **Liveness Probe**: Returns 200 as long as the application is running
+- **Readiness Probe**: Returns 503 when Ollama is unreachable, preventing traffic from being routed to unhealthy instances
 
 ## Configuration
 

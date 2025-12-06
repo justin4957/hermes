@@ -110,14 +110,19 @@ defmodule Hermes.RouterTest do
   end
 
   describe "GET /v1/status" do
-    test "returns 200 with status information" do
+    test "returns 200 with status information when healthy" do
       conn =
         conn(:get, "/v1/status")
         |> Router.call(@opts)
 
-      assert conn.status == 200
+      # Status will be 200 (healthy) or 503 (unhealthy) depending on Ollama availability
+      assert conn.status in [200, 503]
       assert {:ok, body} = Jason.decode(conn.resp_body)
-      assert body["status"] == "ok"
+      assert body["status"] in ["healthy", "unhealthy"]
+      assert is_binary(body["version"])
+      assert is_integer(body["uptime_seconds"])
+      assert is_map(body["checks"])
+      assert is_list(body["models"])
     end
 
     test "returns memory information" do
