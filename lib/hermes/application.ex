@@ -55,11 +55,23 @@ defmodule Hermes.Application do
   """
   @spec start(any(), any()) :: {:ok, pid()} | {:error, any()}
   def start(_type, _args) do
+    # Validate configuration before starting
+    case Config.validate_config() do
+      :ok ->
+        start_supervised_tree()
+
+      {:error, reason} ->
+        {:error, {:config_validation_failed, reason}}
+    end
+  end
+
+  defp start_supervised_tree do
     port = Config.http_port()
 
     children = [
       {Finch, name: Hermes.Finch},
       Hermes.Supervisor,
+      Hermes.ModelRegistry,
       {Plug.Cowboy, scheme: :http, plug: Hermes.Router, options: [port: port]}
     ]
 

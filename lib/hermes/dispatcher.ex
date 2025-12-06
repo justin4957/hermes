@@ -8,6 +8,8 @@ defmodule Hermes.Dispatcher do
 
   ## Responsibility
 
+  - Validates that the model is configured before processing
+  - Enforces per-model concurrency limits via `Hermes.ModelRegistry`
   - Spawns supervised async tasks for LLM requests
   - Enforces timeout constraints on long-running operations
   - Applies model-specific configuration from `config/config.exs`
@@ -57,6 +59,7 @@ defmodule Hermes.Dispatcher do
 
   alias Hermes.Config
   alias Hermes.Error
+  alias Hermes.ModelRegistry
   alias Hermes.Telemetry
 
   @doc """
@@ -97,24 +100,77 @@ defmodule Hermes.Dispatcher do
   @spec dispatch(String.t(), String.t(), keyword()) ::
           {:ok, String.t()} | {:error, Error.error()}
   def dispatch(model, prompt, opts \\ []) do
+    request_id = Keyword.get(opts, :request_id, Telemetry.generate_request_id())
+    skip_validation = Keyword.get(opts, :skip_validation, false)
+
+    # Set logger metadata for this dispatch
+    Logger.metadata(request_id: request_id, model: model)
+
+    # Validate model is configured (can be skipped for testing)
+    case validate_model(model, skip_validation) do
+      :ok ->
+        dispatch_with_concurrency(model, prompt, request_id, opts)
+
+      {:error, _} = error ->
+        Logger.warning("Model validation failed",
+          request_id: request_id,
+          model: model
+        )
+
+        error
+    end
+  end
+
+  defp validate_model(_model, true), do: :ok
+  defp validate_model(model, false), do: Config.validate_model(model)
+
+  defp dispatch_with_concurrency(model, prompt, request_id, opts) do
+    registry = Keyword.get(opts, :model_registry, ModelRegistry)
+    skip_concurrency = Keyword.get(opts, :skip_concurrency, false)
+
+    if skip_concurrency do
+      do_dispatch(model, prompt, request_id, opts)
+    else
+      case registry.acquire(model, registry: registry) do
+        {:ok, slot_ref} ->
+          try do
+            do_dispatch(model, prompt, request_id, opts)
+          after
+            registry.release(slot_ref, registry: registry)
+          end
+
+        {:error, %Error.ConcurrencyLimitError{}} = error ->
+          Logger.warning("Concurrency limit reached",
+            request_id: request_id,
+            model: model
+          )
+
+          error
+      end
+    end
+  end
+
+  defp do_dispatch(model, prompt, request_id, opts) do
     # Use model-specific timeout if not explicitly provided
     timeout = Keyword.get(opts, :timeout) || Config.model_timeout(model)
-    request_id = Keyword.get(opts, :request_id, Telemetry.generate_request_id())
     task_supervisor = Keyword.get(opts, :task_supervisor, Hermes.TaskSupervisor)
     ollama_module = Keyword.get(opts, :ollama_module, Hermes.Ollama)
 
     # Build options for Ollama, ensuring timeout and request_id are set
     ollama_opts =
       opts
-      |> Keyword.drop([:task_supervisor, :ollama_module])
+      |> Keyword.drop([
+        :task_supervisor,
+        :ollama_module,
+        :model_registry,
+        :skip_validation,
+        :skip_concurrency
+      ])
       |> Keyword.put(:timeout, timeout)
       |> Keyword.put(:request_id, request_id)
 
     prompt_length = String.length(prompt)
     start_time = System.monotonic_time()
-
-    # Set logger metadata for this dispatch
-    Logger.metadata(request_id: request_id, model: model)
 
     # Emit telemetry start event
     :telemetry.execute(

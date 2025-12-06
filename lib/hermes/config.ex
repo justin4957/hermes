@@ -26,6 +26,8 @@ defmodule Hermes.Config do
   4. Default values in code
   """
 
+  alias Hermes.Error.ModelNotConfiguredError
+
   @default_port 4020
   @default_ollama_url "http://localhost:11434"
   @default_timeout 30_000
@@ -82,6 +84,156 @@ defmodule Hermes.Config do
       nil -> get_config_value([:ollama, :timeout], @default_timeout)
       timeout -> String.to_integer(timeout)
     end
+  end
+
+  @doc """
+  Returns a list of all configured model names as atoms.
+
+  ## Examples
+
+      iex> Hermes.Config.configured_models()
+      [:gemma, :llama3, :mistral, :codellama, :phi]
+  """
+  @spec configured_models() :: [atom()]
+  def configured_models do
+    models = Application.get_env(:hermes, :models, [])
+    extract_model_names(models)
+  end
+
+  defp extract_model_names(models) when is_list(models), do: Keyword.keys(models)
+  defp extract_model_names(models) when is_map(models), do: Map.keys(models)
+  defp extract_model_names(_), do: []
+
+  @doc """
+  Checks if a model is configured.
+
+  ## Parameters
+
+    * `model` - Model name as string or atom
+
+  ## Returns
+
+    * `true` if the model is configured, `false` otherwise
+
+  ## Examples
+
+      iex> Hermes.Config.model_configured?("gemma")
+      true
+
+      iex> Hermes.Config.model_configured?(:llama3)
+      true
+
+      iex> Hermes.Config.model_configured?("unknown")
+      false
+  """
+  @spec model_configured?(String.t() | atom()) :: boolean()
+  def model_configured?(model) when is_binary(model) do
+    model
+    |> String.to_atom()
+    |> model_configured?()
+  end
+
+  def model_configured?(model) when is_atom(model) do
+    model in configured_models()
+  end
+
+  @doc """
+  Validates that a model is configured and returns the result.
+
+  ## Parameters
+
+    * `model` - Model name as string or atom
+
+  ## Returns
+
+    * `:ok` if the model is configured
+    * `{:error, Hermes.Error.ModelNotConfiguredError.t()}` if not configured
+
+  ## Examples
+
+      iex> Hermes.Config.validate_model("gemma")
+      :ok
+
+      iex> Hermes.Config.validate_model("unknown")
+      {:error, %Hermes.Error.ModelNotConfiguredError{...}}
+  """
+  @spec validate_model(String.t() | atom()) ::
+          :ok | {:error, ModelNotConfiguredError.t()}
+  def validate_model(model) do
+    if model_configured?(model) do
+      :ok
+    else
+      model_str = if is_atom(model), do: Atom.to_string(model), else: model
+      {:error, ModelNotConfiguredError.new(model_str, configured_models())}
+    end
+  end
+
+  @doc """
+  Validates the models configuration at startup.
+
+  Checks that:
+  - Models config exists and is not empty
+  - Each model has required fields (max_concurrency, timeout)
+  - Values are valid types
+
+  ## Returns
+
+    * `:ok` if configuration is valid
+    * `{:error, reason}` if configuration is invalid
+  """
+  @spec validate_config() :: :ok | {:error, String.t()}
+  def validate_config do
+    models = Application.get_env(:hermes, :models)
+
+    cond do
+      is_nil(models) ->
+        {:error, "No models configured. Add models to config :hermes, :models"}
+
+      models == [] or models == %{} ->
+        {:error, "Models configuration is empty. Add at least one model."}
+
+      true ->
+        validate_model_configs(models)
+    end
+  end
+
+  defp validate_model_configs(models) when is_list(models) do
+    Enum.reduce_while(models, :ok, fn {name, config}, :ok ->
+      case validate_single_model_config(name, config) do
+        :ok -> {:cont, :ok}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp validate_model_configs(models) when is_map(models) do
+    models
+    |> Enum.to_list()
+    |> validate_model_configs()
+  end
+
+  defp validate_single_model_config(name, config) when is_map(config) do
+    cond do
+      not is_atom(name) ->
+        {:error, "Model name must be an atom, got: #{inspect(name)}"}
+
+      not Map.has_key?(config, :max_concurrency) ->
+        {:error, "Model #{name} missing :max_concurrency"}
+
+      not is_integer(config.max_concurrency) or config.max_concurrency < 1 ->
+        {:error, "Model #{name} :max_concurrency must be a positive integer"}
+
+      Map.has_key?(config, :timeout) and
+          (not is_integer(config.timeout) or config.timeout < 1) ->
+        {:error, "Model #{name} :timeout must be a positive integer"}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp validate_single_model_config(name, _config) do
+    {:error, "Model #{name} config must be a map"}
   end
 
   @doc """

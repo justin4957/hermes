@@ -11,10 +11,12 @@ defmodule Hermes.Error do
   | Error Type | HTTP Status | Description |
   |------------|-------------|-------------|
   | `ValidationError` | 400 | Invalid request parameters |
-  | `ModelNotFoundError` | 404 | Requested model not available |
+  | `ModelNotConfiguredError` | 404 | Model not in Hermes config |
+  | `ModelNotFoundError` | 404 | Model not found in Ollama |
+  | `ConcurrencyLimitError` | 429 | Model at max concurrency |
   | `TimeoutError` | 408 | Request exceeded timeout |
-  | `OllamaError` | 502 | Upstream Ollama service error |
   | `InternalError` | 500 | Internal server error |
+  | `OllamaError` | 502 | Upstream Ollama service error |
   | `ConnectionError` | 503 | Cannot connect to Ollama |
 
   ## Usage
@@ -34,7 +36,9 @@ defmodule Hermes.Error do
 
   @type error ::
           Hermes.Error.ValidationError.t()
+          | Hermes.Error.ModelNotConfiguredError.t()
           | Hermes.Error.ModelNotFoundError.t()
+          | Hermes.Error.ConcurrencyLimitError.t()
           | Hermes.Error.TimeoutError.t()
           | Hermes.Error.OllamaError.t()
           | Hermes.Error.InternalError.t()
@@ -66,9 +70,43 @@ defmodule Hermes.Error do
     end
   end
 
+  defmodule ModelNotConfiguredError do
+    @moduledoc """
+    Error when the requested model is not configured in Hermes (HTTP 404).
+
+    Raised when a model name is not in the configured models list.
+    This is different from ModelNotFoundError which indicates Ollama
+    doesn't have the model.
+    """
+
+    @type t :: %__MODULE__{
+            message: String.t(),
+            model: String.t(),
+            available_models: [atom()]
+          }
+
+    defstruct [:message, :model, :available_models]
+
+    @doc "Creates a new ModelNotConfiguredError"
+    @spec new(String.t(), [atom()]) :: t()
+    def new(model, available_models \\ []) do
+      available_str =
+        case available_models do
+          [] -> ""
+          models -> " Available models: #{Enum.map_join(models, ", ", &Atom.to_string/1)}"
+        end
+
+      %__MODULE__{
+        message: "Model '#{model}' is not configured.#{available_str}",
+        model: model,
+        available_models: available_models
+      }
+    end
+  end
+
   defmodule ModelNotFoundError do
     @moduledoc """
-    Error when the requested model is not available (HTTP 404).
+    Error when the requested model is not available in Ollama (HTTP 404).
 
     Raised when Ollama returns a 404 for the specified model.
     """
@@ -86,6 +124,35 @@ defmodule Hermes.Error do
       %__MODULE__{
         message: "Model '#{model}' not found. Ensure it is pulled in Ollama.",
         model: model
+      }
+    end
+  end
+
+  defmodule ConcurrencyLimitError do
+    @moduledoc """
+    Error when the model has reached its maximum concurrent requests (HTTP 429).
+
+    Raised when the configured max_concurrency limit for a model is reached.
+    """
+
+    @type t :: %__MODULE__{
+            message: String.t(),
+            model: String.t(),
+            max_concurrency: non_neg_integer(),
+            current_count: non_neg_integer()
+          }
+
+    defstruct [:message, :model, :max_concurrency, :current_count]
+
+    @doc "Creates a new ConcurrencyLimitError"
+    @spec new(String.t(), non_neg_integer(), non_neg_integer()) :: t()
+    def new(model, max_concurrency, current_count) do
+      %__MODULE__{
+        message:
+          "Model '#{model}' is at capacity (#{current_count}/#{max_concurrency} concurrent requests). Please retry later.",
+        model: model,
+        max_concurrency: max_concurrency,
+        current_count: current_count
       }
     end
   end
@@ -205,7 +272,9 @@ defmodule Hermes.Error do
   """
   @spec http_status(error()) :: non_neg_integer()
   def http_status(%ValidationError{}), do: 400
+  def http_status(%ModelNotConfiguredError{}), do: 404
   def http_status(%ModelNotFoundError{}), do: 404
+  def http_status(%ConcurrencyLimitError{}), do: 429
   def http_status(%TimeoutError{}), do: 408
   def http_status(%InternalError{}), do: 500
   def http_status(%OllamaError{}), do: 502
@@ -235,7 +304,9 @@ defmodule Hermes.Error do
   """
   @spec type(error()) :: atom()
   def type(%ValidationError{}), do: :validation_error
+  def type(%ModelNotConfiguredError{}), do: :model_not_configured
   def type(%ModelNotFoundError{}), do: :model_not_found
+  def type(%ConcurrencyLimitError{}), do: :concurrency_limit
   def type(%TimeoutError{}), do: :timeout
   def type(%InternalError{}), do: :internal_error
   def type(%OllamaError{}), do: :ollama_error
@@ -257,8 +328,27 @@ defmodule Hermes.Error do
     if field, do: Map.put(base, :field, field), else: base
   end
 
+  def to_map(%ModelNotConfiguredError{message: msg, model: model, available_models: models}) do
+    base = %{error: msg, type: "model_not_configured", model: model}
+
+    if models && models != [] do
+      Map.put(base, :available_models, Enum.map(models, &Atom.to_string/1))
+    else
+      base
+    end
+  end
+
   def to_map(%ModelNotFoundError{message: msg, model: model}) do
     %{error: msg, type: "model_not_found", model: model}
+  end
+
+  def to_map(%ConcurrencyLimitError{
+        message: msg,
+        model: model,
+        max_concurrency: max,
+        current_count: current
+      }) do
+    %{error: msg, type: "concurrency_limit", model: model, max_concurrency: max, current: current}
   end
 
   def to_map(%TimeoutError{message: msg, timeout_ms: timeout}) do
