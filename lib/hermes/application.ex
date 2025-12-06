@@ -31,6 +31,7 @@ defmodule Hermes.Application do
   use Application
 
   alias Hermes.Config
+  alias Hermes.Health
 
   @doc """
   Starts the Hermes application and its supervision tree.
@@ -55,6 +56,9 @@ defmodule Hermes.Application do
   """
   @spec start(any(), any()) :: {:ok, pid()} | {:error, any()}
   def start(_type, _args) do
+    # Record application start time for uptime tracking
+    Health.record_start_time()
+
     # Validate configuration before starting
     case Config.validate_config() do
       :ok ->

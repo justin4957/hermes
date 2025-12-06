@@ -6,6 +6,7 @@
 _build
 deps
 *.ez
+*.beam
 
 # Generated files
 doc
@@ -23,19 +24,13 @@ cover
 .DS_Store
 Thumbs.db
 
-# Test files
+# Test and dev tooling
 test
-*.exs
-!mix.exs
-
-# CI/CD
-.github
-
-# Documentation
-*.md
-!README.md
-openapi.yaml
-examples
-
-# PLT files
+test_server.exs
 priv/plts
+.github
+doc
+cover
+examples
+openapi.yaml
+.env*
