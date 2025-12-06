@@ -35,7 +35,7 @@ RUN mix release
 FROM alpine:3.19 AS runtime
 
 # Install runtime dependencies
-RUN apk add --no-cache libstdc++ openssl ncurses-libs
+RUN apk add --no-cache libstdc++ openssl ncurses-libs wget curl
 
 # Set working directory
 WORKDIR /app

@@ -42,6 +42,14 @@ A minimal, efficient Elixir-based sidecar service that interfaces with Ollama to
    curl http://localhost:4020/v1/status
    ```
 
+## Docker & Compose
+
+- Build image: `docker build -t hermes .`
+- Run release container (pointing to an external Ollama):  
+  `docker run --rm -p 4020:4020 -e OLLAMA_URL=http://host.docker.internal:11434 hermes`
+- Local stack with Ollama: `docker compose up --build` (uses `docker-compose.yml`, exposes 4020 and 11434, and includes health checks for both services).
+- Configure via env vars (`PORT`, `OLLAMA_URL`, `OLLAMA_TIMEOUT`); defaults match local compose.
+
 ## API Endpoints
 
 | Endpoint | Method | Description | Status Codes |
