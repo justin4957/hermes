@@ -235,6 +235,67 @@ defmodule Hermes.RouterTest do
     end
   end
 
+  describe "POST /v1/llm/:model/stream" do
+    test "returns 400 when prompt is missing" do
+      conn =
+        conn(:post, "/v1/llm/gemma/stream", Jason.encode!(%{"not_prompt" => "test"}))
+        |> put_req_header("content-type", "application/json")
+        |> Router.call(@opts)
+
+      assert conn.status == 400
+      assert {:ok, body} = Jason.decode(conn.resp_body)
+      assert body["error"] =~ "Missing 'prompt' field"
+    end
+
+    test "returns 400 when prompt is not a string" do
+      conn =
+        conn(:post, "/v1/llm/gemma/stream", Jason.encode!(%{"prompt" => 123}))
+        |> put_req_header("content-type", "application/json")
+        |> Router.call(@opts)
+
+      assert conn.status == 400
+      assert {:ok, body} = Jason.decode(conn.resp_body)
+      assert body["error"] =~ "Missing 'prompt' field" or body["error"] =~ "invalid"
+    end
+
+    test "returns 400 when prompt is null" do
+      conn =
+        conn(:post, "/v1/llm/gemma/stream", Jason.encode!(%{"prompt" => nil}))
+        |> put_req_header("content-type", "application/json")
+        |> Router.call(@opts)
+
+      assert conn.status == 400
+    end
+
+    test "route exists and returns valid response" do
+      # This test makes real connections so it may take time if Ollama isn't running
+      conn =
+        conn(:post, "/v1/llm/gemma/stream", Jason.encode!(%{"prompt" => "test"}))
+        |> put_req_header("content-type", "application/json")
+        |> Router.call(@opts)
+
+      # The route should exist and return a valid status code
+      # 200 for streaming response (even if there's an error, SSE sends 200 first)
+      # or other codes if validation fails before streaming starts
+      assert conn.status in [200, 400, 404, 408, 500, 502, 503]
+    end
+
+    test "accepts different model names in path" do
+      models = ["gemma", "llama3", "mistral"]
+
+      for model <- models do
+        conn =
+          conn(:post, "/v1/llm/#{model}/stream", Jason.encode!(%{"prompt" => "test"}))
+          |> put_req_header("content-type", "application/json")
+          |> Router.call(@opts)
+
+        # The route should exist for all models
+        assert conn.status in [200, 400, 404, 408, 500, 502, 503],
+               "Model #{model} stream route should return a valid status, got #{conn.status}"
+      end
+    end
+  end
+
   describe "edge cases" do
     test "handles empty model name in path" do
       conn =

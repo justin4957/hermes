@@ -128,6 +128,110 @@ paths:
                   value:
                     error: "Request failed: connection refused"
 
+  /v1/llm/{model}/stream:
+    post:
+      tags:
+        - LLM
+      summary: Stream text generation from LLM model
+      description: |
+        Submit a text prompt to the specified Ollama model and receive streamed
+        response chunks via Server-Sent Events (SSE). Each chunk is delivered
+        as soon as it's generated, enabling real-time display of partial responses.
+
+        ## SSE Event Format
+
+        Events are sent as JSON objects with the following types:
+
+        - **Chunk event**: `data: {"chunk": "partial text"}`
+        - **Done event**: `data: {"done": true}`
+        - **Error event**: `data: {"error": "message", "type": "error_type"}`
+
+        ## Client Handling
+
+        Clients should:
+        1. Parse each `data:` line as JSON
+        2. Display chunk text incrementally
+        3. Handle connection drops gracefully
+        4. Implement reconnection logic if needed
+
+      operationId: streamText
+      parameters:
+        - name: model
+          in: path
+          required: true
+          description: Name of the Ollama model to use for generation
+          schema:
+            type: string
+            example: gemma
+          examples:
+            gemma:
+              value: gemma
+              summary: Use Gemma model
+            llama3:
+              value: llama3
+              summary: Use Llama 3 model
+            mistral:
+              value: mistral
+              summary: Use Mistral model
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateRequest'
+            examples:
+              simple:
+                summary: Simple question
+                value:
+                  prompt: "What is Elixir?"
+              complex:
+                summary: Complex prompt
+                value:
+                  prompt: "Explain the benefits of functional programming in detail"
+
+      responses:
+        '200':
+          description: SSE stream of response chunks
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  Server-Sent Events stream. Each event is a JSON object:
+                  - Chunk: `{"chunk": "partial text"}`
+                  - Done: `{"done": true}`
+                  - Error: `{"error": "message", "type": "error_type"}`
+              examples:
+                streaming:
+                  summary: Streaming response
+                  value: |
+                    data: {"chunk":"Elixir"}
+
+                    data: {"chunk":" is"}
+
+                    data: {"chunk":" a"}
+
+                    data: {"chunk":" functional"}
+
+                    data: {"chunk":" programming"}
+
+                    data: {"chunk":" language."}
+
+                    data: {"done":true}
+
+        '400':
+          description: Bad request - missing or invalid prompt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missingPrompt:
+                  summary: Missing prompt field
+                  value:
+                    error: "Missing 'prompt' field or invalid JSON"
+
   /v1/status:
     get:
       tags:

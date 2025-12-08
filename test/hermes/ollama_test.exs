@@ -228,4 +228,186 @@ defmodule Hermes.OllamaTest do
       assert {:ok, ^unicode_response} = result
     end
   end
+
+  describe "generate_stream/4" do
+    test "streams response chunks when Ollama returns 200", ctx do
+      # Simulate streaming response with all chunks in a single body
+      # (Ollama sends newline-delimited JSON)
+      response_body =
+        ~s({"model":"gemma","response":"Hello","done":false}\n) <>
+          ~s({"model":"gemma","response":" world","done":false}\n) <>
+          ~s({"model":"gemma","response":"!","done":false}\n) <>
+          ~s({"model":"gemma","response":"","done":true}\n)
+
+      parent = self()
+
+      Bypass.expect_once(ctx.bypass, "POST", "/api/generate", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        decoded_body = Jason.decode!(body)
+
+        assert decoded_body["model"] == "gemma"
+        assert decoded_body["prompt"] == "Hello"
+        assert decoded_body["stream"] == true
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/x-ndjson")
+        |> Plug.Conn.resp(200, response_body)
+      end)
+
+      callback = fn event ->
+        send(parent, {:callback, event})
+      end
+
+      result =
+        Ollama.generate_stream("gemma", "Hello", callback,
+          base_url: ctx.base_url,
+          finch_name: ctx.finch_name
+        )
+
+      assert result == :ok
+
+      # Verify we received chunks - use longer timeout and collect all messages
+      assert_receive {:callback, {:chunk, "Hello"}}, 1000
+      assert_receive {:callback, {:chunk, " world"}}, 1000
+      assert_receive {:callback, {:chunk, "!"}}, 1000
+      assert_receive {:callback, {:done, nil}}, 1000
+    end
+
+    test "returns error for 404 HTTP status during streaming", ctx do
+      parent = self()
+
+      Bypass.expect_once(ctx.bypass, "POST", "/api/generate", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(404, "model 'invalid' not found")
+      end)
+
+      callback = fn event -> send(parent, {:callback, event}) end
+
+      result =
+        Ollama.generate_stream("invalid", "test", callback,
+          base_url: ctx.base_url,
+          finch_name: ctx.finch_name
+        )
+
+      assert {:error, %Error.ModelNotFoundError{model: "invalid"}} = result
+      assert_receive {:callback, {:error, %Error.ModelNotFoundError{model: "invalid"}}}
+    end
+
+    test "returns error for 500 HTTP status during streaming", ctx do
+      parent = self()
+
+      Bypass.expect_once(ctx.bypass, "POST", "/api/generate", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(500, "Internal server error")
+      end)
+
+      callback = fn event -> send(parent, {:callback, event}) end
+
+      result =
+        Ollama.generate_stream("gemma", "test", callback,
+          base_url: ctx.base_url,
+          finch_name: ctx.finch_name
+        )
+
+      assert {:error, %Error.OllamaError{status_code: 500}} = result
+      assert_receive {:callback, {:error, %Error.OllamaError{status_code: 500}}}
+    end
+
+    test "handles connection refused error during streaming", ctx do
+      parent = self()
+
+      # Close the bypass to simulate connection refused
+      Bypass.down(ctx.bypass)
+
+      callback = fn event -> send(parent, {:callback, event}) end
+
+      result =
+        Ollama.generate_stream("gemma", "test", callback,
+          base_url: ctx.base_url,
+          finch_name: ctx.finch_name
+        )
+
+      assert {:error, %Error.ConnectionError{}} = result
+      assert_receive {:callback, {:error, %Error.ConnectionError{}}}
+    end
+
+    test "sends correct content-type header for streaming", ctx do
+      parent = self()
+
+      Bypass.expect_once(ctx.bypass, "POST", "/api/generate", fn conn ->
+        assert Plug.Conn.get_req_header(conn, "content-type") == ["application/json"]
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/x-ndjson")
+        |> Plug.Conn.resp(200, ~s({"response":"ok","done":true}\n))
+      end)
+
+      callback = fn event -> send(parent, {:callback, event}) end
+
+      Ollama.generate_stream("gemma", "test", callback,
+        base_url: ctx.base_url,
+        finch_name: ctx.finch_name
+      )
+
+      assert_receive {:callback, {:done, nil}}
+    end
+
+    test "handles unicode in streaming response", ctx do
+      parent = self()
+      unicode_response = "你好世界"
+
+      response_body =
+        Jason.encode!(%{"model" => "gemma", "response" => unicode_response, "done" => false}) <>
+          "\n" <>
+          Jason.encode!(%{"model" => "gemma", "response" => "", "done" => true}) <> "\n"
+
+      Bypass.expect_once(ctx.bypass, "POST", "/api/generate", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/x-ndjson")
+        |> Plug.Conn.resp(200, response_body)
+      end)
+
+      callback = fn event -> send(parent, {:callback, event}) end
+
+      result =
+        Ollama.generate_stream("gemma", "test", callback,
+          base_url: ctx.base_url,
+          finch_name: ctx.finch_name
+        )
+
+      assert result == :ok
+      assert_receive {:callback, {:chunk, ^unicode_response}}
+      assert_receive {:callback, {:done, nil}}
+    end
+
+    test "handles empty chunks gracefully", ctx do
+      parent = self()
+
+      # Simulate response with empty lines between chunks
+      response_body =
+        ~s({"model":"gemma","response":"Hello","done":false}\n) <>
+          "\n" <>
+          ~s({"model":"gemma","response":"","done":true}\n)
+
+      Bypass.expect_once(ctx.bypass, "POST", "/api/generate", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/x-ndjson")
+        |> Plug.Conn.resp(200, response_body)
+      end)
+
+      callback = fn event -> send(parent, {:callback, event}) end
+
+      result =
+        Ollama.generate_stream("gemma", "test", callback,
+          base_url: ctx.base_url,
+          finch_name: ctx.finch_name
+        )
+
+      assert result == :ok
+      assert_receive {:callback, {:chunk, "Hello"}}
+      assert_receive {:callback, {:done, nil}}
+    end
+  end
 end

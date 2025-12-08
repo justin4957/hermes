@@ -55,6 +55,7 @@ A minimal, efficient Elixir-based sidecar service that interfaces with Ollama to
 | Endpoint | Method | Description | Status Codes |
 |----------|---------|-------------|--------------|
 | `/v1/llm/:model` | POST | Submit prompt to specified model | 200, 400, 404, 408, 429, 500, 502, 503 |
+| `/v1/llm/:model/stream` | POST | Stream response via SSE | 200, 400 |
 | `/v1/status` | GET | Health check and resource usage | 200, 503 |
 
 ### POST /v1/llm/:model
@@ -94,6 +95,110 @@ curl -X POST http://localhost:4020/v1/llm/gemma \
 {
   "result": "Elixir is a dynamic, functional programming language designed for building maintainable and scalable applications..."
 }
+```
+
+### POST /v1/llm/:model/stream
+
+Stream text generation from a specified LLM model using Server-Sent Events (SSE). Response chunks are delivered in real-time as they are generated.
+
+**Path Parameters:**
+- `model` - Name of Ollama model (e.g., `gemma`, `llama3`, `mistral`)
+
+**Request Body:**
+```json
+{
+  "prompt": "Your text prompt here"
+}
+```
+
+**SSE Events:**
+- `data: {"chunk": "partial text"}` - Streamed response chunk
+- `data: {"done": true}` - Generation complete
+- `data: {"error": "message", "type": "error_type"}` - Error occurred
+
+**Example Request:**
+```bash
+curl -N http://localhost:4020/v1/llm/gemma/stream \
+     -H "Content-Type: application/json" \
+     -d '{"prompt": "What is Elixir?"}'
+```
+
+**Example Response Stream:**
+```
+data: {"chunk":"Elixir"}
+
+data: {"chunk":" is"}
+
+data: {"chunk":" a"}
+
+data: {"chunk":" functional"}
+
+data: {"chunk":" programming"}
+
+data: {"chunk":" language."}
+
+data: {"done":true}
+```
+
+**Python Client Example:**
+```python
+import requests
+import json
+
+def stream_response(model, prompt):
+    url = f"http://localhost:4020/v1/llm/{model}/stream"
+    headers = {"Content-Type": "application/json"}
+    data = {"prompt": prompt}
+
+    with requests.post(url, json=data, headers=headers, stream=True) as response:
+        for line in response.iter_lines():
+            if line:
+                line = line.decode('utf-8')
+                if line.startswith('data: '):
+                    event_data = json.loads(line[6:])
+                    if 'chunk' in event_data:
+                        print(event_data['chunk'], end='', flush=True)
+                    elif 'done' in event_data:
+                        print()  # New line at end
+                    elif 'error' in event_data:
+                        print(f"\nError: {event_data['error']}")
+
+# Usage
+stream_response("gemma", "Explain quantum computing")
+```
+
+**JavaScript/Node.js Client Example:**
+```javascript
+async function streamResponse(model, prompt) {
+  const response = await fetch(`http://localhost:4020/v1/llm/${model}/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt })
+  });
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const text = decoder.decode(value);
+    const lines = text.split('\n');
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const data = JSON.parse(line.slice(6));
+        if (data.chunk) process.stdout.write(data.chunk);
+        else if (data.done) console.log();
+        else if (data.error) console.error('\nError:', data.error);
+      }
+    }
+  }
+}
+
+// Usage
+streamResponse('gemma', 'Explain quantum computing');
 ```
 
 ### GET /v1/status
