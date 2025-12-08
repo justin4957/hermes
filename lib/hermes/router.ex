@@ -110,7 +110,38 @@ defmodule Hermes.Router do
 
   ## Content Type
 
-  All endpoints expect and return `application/json`.
+  All endpoints expect and return `application/json`, except for the streaming
+  endpoint which returns `text/event-stream` (Server-Sent Events).
+
+  ### POST /v1/llm/:model/stream
+
+  Submit a text prompt to a specified LLM model for streaming generation.
+  Returns Server-Sent Events (SSE) with response chunks as they are generated.
+
+  **Path Parameters:**
+  - `model` - Name of the Ollama model (e.g., "gemma", "llama3", "mistral")
+
+  **Request Body:**
+  ```json
+  {
+    "prompt": "Your text prompt here"
+  }
+  ```
+
+  **SSE Events:**
+  - `data: {"chunk": "partial text"}` - Streamed response chunk
+  - `data: {"done": true}` - Generation complete
+  - `data: {"error": "message", "type": "error_type"}` - Error occurred
+
+  **Error Responses:**
+  - `400 Bad Request` - Missing or invalid prompt field
+
+  **Example:**
+  ```bash
+  curl -N http://localhost:4020/v1/llm/gemma/stream \\
+       -H "Content-Type: application/json" \\
+       -d '{"prompt": "What is Elixir?"}'
+  ```
   """
 
   use Plug.Router
@@ -129,6 +160,68 @@ defmodule Hermes.Router do
   plug(Plug.Parsers, parsers: [:json], json_decoder: Jason)
   plug(:set_logger_metadata)
   plug(:dispatch)
+
+  # POST /v1/llm/:model/stream
+  # Handles POST requests to stream text generation from an LLM model.
+  # Uses Server-Sent Events (SSE) to stream response chunks to the client.
+  # Returns chunked response with text/event-stream content type.
+  post "/v1/llm/:model/stream" do
+    request_id = Telemetry.get_request_id(conn)
+
+    case conn.body_params do
+      %{"prompt" => prompt} when is_binary(prompt) ->
+        prompt_length = String.length(prompt)
+
+        Logger.info("Streaming LLM request started",
+          request_id: request_id,
+          model: model,
+          prompt_length: prompt_length
+        )
+
+        # Set up SSE response headers
+        conn =
+          conn
+          |> put_resp_header("content-type", "text/event-stream")
+          |> put_resp_header("cache-control", "no-cache")
+          |> put_resp_header("connection", "keep-alive")
+          |> put_resp_header("x-accel-buffering", "no")
+          |> send_chunked(200)
+
+        # Create a callback that sends SSE events
+        sse_callback = build_sse_callback(conn, request_id, model)
+
+        # Start streaming - this blocks until streaming completes
+        case Hermes.Dispatcher.dispatch_stream(model, prompt, sse_callback,
+               request_id: request_id
+             ) do
+          :ok ->
+            Logger.info("Streaming LLM request completed",
+              request_id: request_id,
+              model: model
+            )
+
+            conn
+
+          {:error, _error} ->
+            # Error was already sent via SSE callback
+            conn
+        end
+
+      _other ->
+        validation_error =
+          Error.ValidationError.new(
+            "Missing 'prompt' field or invalid JSON",
+            field: "prompt"
+          )
+
+        Logger.warning("Invalid streaming LLM request: missing prompt",
+          request_id: request_id,
+          model: model
+        )
+
+        send_resp(conn, 400, Jason.encode!(Error.to_map(validation_error)))
+    end
+  end
 
   # POST /v1/llm/:model
   # Handles POST requests to generate text from an LLM model.
@@ -227,5 +320,71 @@ defmodule Hermes.Router do
     )
 
     conn
+  end
+
+  # Builds a callback function for SSE streaming
+  defp build_sse_callback(conn, request_id, model) do
+    fn
+      {:chunk, text} ->
+        # Send chunk as SSE data event
+        sse_data = Jason.encode!(%{chunk: text})
+        sse_event = "data: #{sse_data}\n\n"
+
+        case Plug.Conn.chunk(conn, sse_event) do
+          {:ok, _conn} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Failed to send SSE chunk",
+              request_id: request_id,
+              model: model,
+              reason: inspect(reason)
+            )
+
+            :error
+        end
+
+      {:done, nil} ->
+        # Send completion event
+        sse_data = Jason.encode!(%{done: true})
+        sse_event = "data: #{sse_data}\n\n"
+
+        case Plug.Conn.chunk(conn, sse_event) do
+          {:ok, _conn} ->
+            Logger.debug("SSE stream completed",
+              request_id: request_id,
+              model: model
+            )
+
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Failed to send SSE done event",
+              request_id: request_id,
+              model: model,
+              reason: inspect(reason)
+            )
+
+            :error
+        end
+
+      {:error, error} ->
+        # Send error event
+        error_map = Error.to_map(error)
+        sse_data = Jason.encode!(error_map)
+        sse_event = "data: #{sse_data}\n\n"
+
+        Logger.error("SSE stream error",
+          request_id: request_id,
+          model: model,
+          error_type: Error.type(error),
+          error: Error.message(error)
+        )
+
+        case Plug.Conn.chunk(conn, sse_event) do
+          {:ok, _conn} -> :ok
+          {:error, _reason} -> :error
+        end
+    end
   end
 end

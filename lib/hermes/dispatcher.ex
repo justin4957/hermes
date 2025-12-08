@@ -244,4 +244,157 @@ defmodule Hermes.Dispatcher do
 
     result
   end
+
+  @doc """
+  Dispatches a streaming LLM generation request.
+
+  Similar to `dispatch/3`, but streams the response in real-time through
+  a callback function. This is useful for displaying partial responses
+  to users as they are generated.
+
+  ## Parameters
+
+    * `model` - String name of the Ollama model to use
+    * `prompt` - String containing the text prompt
+    * `callback` - Function that receives streaming events:
+      * `{:chunk, text}` - A partial response chunk
+      * `{:done, nil}` - Streaming completed successfully
+      * `{:error, error}` - An error occurred
+    * `opts` - Keyword list of options:
+      * `:timeout` - Maximum execution time in milliseconds (default: 30,000)
+
+  ## Returns
+
+    * `:ok` - Streaming completed successfully
+    * `{:error, error}` - Structured error (see `Hermes.Error`)
+
+  ## Examples
+
+      iex> callback = fn
+      ...>   {:chunk, text} -> send(self(), {:chunk, text})
+      ...>   {:done, nil} -> send(self(), :done)
+      ...>   {:error, error} -> send(self(), {:error, error})
+      ...> end
+      iex> Hermes.Dispatcher.dispatch_stream("gemma", "Hello", callback)
+      :ok
+  """
+  @spec dispatch_stream(String.t(), String.t(), (term() -> any()), keyword()) ::
+          :ok | {:error, Error.error()}
+  def dispatch_stream(model, prompt, callback, opts \\ []) do
+    request_id = Keyword.get(opts, :request_id, Telemetry.generate_request_id())
+    skip_validation = Keyword.get(opts, :skip_validation, false)
+
+    # Set logger metadata for this dispatch
+    Logger.metadata(request_id: request_id, model: model)
+
+    # Validate model is configured (can be skipped for testing)
+    case validate_model(model, skip_validation) do
+      :ok ->
+        dispatch_stream_with_concurrency(model, prompt, callback, request_id, opts)
+
+      {:error, _} = error ->
+        Logger.warning("Model validation failed for streaming request",
+          request_id: request_id,
+          model: model
+        )
+
+        callback.({:error, error})
+        error
+    end
+  end
+
+  defp dispatch_stream_with_concurrency(model, prompt, callback, request_id, opts) do
+    registry = Keyword.get(opts, :model_registry, ModelRegistry)
+    skip_concurrency = Keyword.get(opts, :skip_concurrency, false)
+
+    if skip_concurrency do
+      do_dispatch_stream(model, prompt, callback, request_id, opts)
+    else
+      case registry.acquire(model, registry: registry) do
+        {:ok, slot_ref} ->
+          try do
+            do_dispatch_stream(model, prompt, callback, request_id, opts)
+          after
+            registry.release(slot_ref, registry: registry)
+          end
+
+        {:error, %Error.ConcurrencyLimitError{}} = error ->
+          Logger.warning("Concurrency limit reached for streaming request",
+            request_id: request_id,
+            model: model
+          )
+
+          callback.({:error, error})
+          error
+      end
+    end
+  end
+
+  defp do_dispatch_stream(model, prompt, callback, request_id, opts) do
+    # Use model-specific timeout if not explicitly provided
+    timeout = Keyword.get(opts, :timeout) || Config.model_timeout(model)
+    ollama_module = Keyword.get(opts, :ollama_module, Hermes.Ollama)
+
+    # Build options for Ollama, ensuring timeout and request_id are set
+    ollama_opts =
+      opts
+      |> Keyword.drop([
+        :task_supervisor,
+        :ollama_module,
+        :model_registry,
+        :skip_validation,
+        :skip_concurrency
+      ])
+      |> Keyword.put(:timeout, timeout)
+      |> Keyword.put(:request_id, request_id)
+
+    prompt_length = String.length(prompt)
+    start_time = System.monotonic_time()
+
+    # Emit telemetry start event
+    :telemetry.execute(
+      [:hermes, :llm, :stream, :start],
+      %{system_time: System.system_time()},
+      %{request_id: request_id, model: model, prompt_length: prompt_length, timeout: timeout}
+    )
+
+    Logger.info("Streaming LLM request started",
+      request_id: request_id,
+      model: model,
+      prompt_length: prompt_length,
+      timeout: timeout
+    )
+
+    # For streaming, we call directly rather than spawning a task
+    # since we need to stream chunks back to the caller synchronously
+    result = ollama_module.generate_stream(model, prompt, callback, ollama_opts)
+
+    # Calculate duration and emit telemetry stop event
+    duration = System.monotonic_time() - start_time
+    duration_ms = System.convert_time_unit(duration, :native, :millisecond)
+
+    status = if result == :ok, do: :ok, else: :error
+
+    :telemetry.execute(
+      [:hermes, :llm, :stream, :stop],
+      %{duration: duration},
+      %{
+        request_id: request_id,
+        model: model,
+        status: status,
+        result: result
+      }
+    )
+
+    log_level = if status == :ok, do: :info, else: :warning
+
+    Logger.log(log_level, "Streaming LLM request completed",
+      request_id: request_id,
+      model: model,
+      status: status,
+      duration_ms: duration_ms
+    )
+
+    result
+  end
 end
